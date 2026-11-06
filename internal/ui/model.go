@@ -43,7 +43,7 @@ type window struct {
 	pending           int // new lines received while scrolled back, measured on render
 	mention, joined   bool
 	namesReceiving    bool
-	suppressJoinNames bool // hide the automatic NAMES reply until its 366
+	suppressJoinNames bool // hide an automatic NAMES reply (join or mode refresh) until its 366
 	raw, server       bool
 }
 
@@ -77,6 +77,10 @@ type nickHit struct {
 
 // modePrefixes are the membership prefixes of a nick, highest rank first.
 const modePrefixes = "~&@%+"
+
+// membershipModes are the channel mode letters behind modePrefixes. Only a
+// change to one of them alters the nicklist, so only it needs a NAMES refresh.
+const membershipModes = "qaohv"
 
 // isChannel reports whether a window name is a channel. v0.0.1 knows only # channels.
 func isChannel(name string) bool { return strings.HasPrefix(name, "#") }

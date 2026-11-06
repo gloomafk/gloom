@@ -80,6 +80,25 @@ func TestCommonCommandsOnWire(t *testing.T) {
 			}
 		}
 	})
+	t.Run("names refresh only on membership modes", func(t *testing.T) {
+		w := m.current()
+		deliver(t, m, ":irc.gloom.im MODE #gloom +nt")
+		// The +nt change must send nothing, so the next command is the sentinel.
+		m.command("/whois sentinel")
+		if got := read(); got != "WHOIS sentinel" {
+			t.Fatalf("got %q, want WHOIS sentinel", got)
+		}
+		deliver(t, m, ":alice!u@gloom.im MODE #gloom +v bob")
+		if got := read(); got != "NAMES #gloom" {
+			t.Fatalf("got %q, want NAMES #gloom", got)
+		}
+		before := len(w.lines)
+		deliver(t, m, ":irc.gloom.im 353 tester = #gloom :tester @alice +bob")
+		deliver(t, m, ":irc.gloom.im 366 tester #gloom :End of names")
+		if len(w.lines) != before || w.nicks["bob"] != "+bob" {
+			t.Fatal("a mode refresh must update the nicklist without adding messages")
+		}
+	})
 	cases := []struct{ input, want string }{
 		{"/mode", "MODE #gloom"},
 		{"/mode +o alice", "MODE #gloom +o alice"},
