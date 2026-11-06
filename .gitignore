@@ -1,0 +1,33 @@
+# Build output from make build and go build ./cmd/gloom.
+/bin/
+/gloom
+/gloom.exe
+
+# Go test binaries, coverage and profiling output.
+*.test
+*.test.exe
+/coverage.out
+/coverage.html
+*.prof
+*.pprof
+
+# Local Go workspace and debugger files.
+/go.work
+/go.work.sum
+__debug_bin*
+
+# Local environment files. Keep examples available to commit.
+.env
+.env.*
+!.env.example
+!.env.sample
+
+# Editor and operating system files.
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+._*
+Thumbs.db
