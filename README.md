@@ -1,4 +1,4 @@
-# gloom
+# gloom [![Build](https://github.com/gloomafk/gloom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gloomafk/gloom/actions/workflows/ci.yml)
 
 <picture>
     <source media="(prefers-color-scheme: dark)"
