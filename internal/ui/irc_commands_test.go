@@ -3,11 +3,13 @@ package ui
 import (
 	"bufio"
 	"net"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/charmbracelet/x/ansi"
 	"gloom.im/gloom/internal/irc"
 )
 
@@ -195,6 +197,42 @@ func TestClearCurrentWindow(t *testing.T) {
 	}
 	if len(m.windows[0].lines) == 0 || !w.joined || w.nicks["alice"] != "@alice" {
 		t.Fatal("clear changed other history or membership")
+	}
+}
+
+// TestClearEmptiesEachWindowKind checks that /clear leaves a channel, a
+// private message and the server window with no visible history.
+func TestClearEmptiesEachWindowKind(t *testing.T) {
+	for _, tc := range []struct{ name, window, text string }{
+		{"channel", "#gloom", "channel text"},
+		{"private message", "bob", "private text"},
+		{"server", "irc.gloom.im", "server text"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			m := chatModel(t)
+			m.openServer("irc.gloom.im")
+			deliver(t, m, ":irc.gloom.im 001 tester :Welcome server text")
+			deliver(t, m, ":irc.gloom.im NOTICE tester :server text")
+			deliver(t, m, ":tester!u@gloom.im JOIN #gloom")
+			deliver(t, m, ":alice!u@gloom.im PRIVMSG #gloom :channel text")
+			deliver(t, m, ":bob!u@gloom.im PRIVMSG tester :private text")
+			i := slices.IndexFunc(m.windows, func(w *window) bool { return w.name == tc.window })
+			if i < 0 {
+				t.Fatalf("no %s window", tc.window)
+			}
+			m.selectWindow(i)
+			if !strings.Contains(ansi.Strip(m.View().Content), tc.text) {
+				t.Fatalf("%s window does not show %q before /clear", tc.window, tc.text)
+			}
+			m.command("/clear")
+			screen := ansi.Strip(m.View().Content)
+			if len(m.windows[i].lines) != 0 || len(m.body.rows) != 0 {
+				t.Fatalf("%s window still has history after /clear", tc.window)
+			}
+			if strings.Contains(screen, tc.text) {
+				t.Fatalf("%s window still shows %q after /clear", tc.window, tc.text)
+			}
+		})
 	}
 }
 
