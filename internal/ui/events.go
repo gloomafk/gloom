@@ -259,6 +259,10 @@ func (m *Model) receive(e irc.Event) {
 			return
 		}
 		m.add(i, "", nick+" set mode "+strings.Join(a[1:], " "))
+		if !strings.ContainsAny(a[1], membershipModes) {
+			return
+		}
+		m.windows[i].suppressJoinNames = true
 		m.send("NAMES " + a[0])
 	case "ERROR":
 		m.add(m.serverWindow(), "", p.Trailing())
