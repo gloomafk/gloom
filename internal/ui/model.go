@@ -35,15 +35,16 @@ type line struct {
 
 // Each window keeps independent scrollback and activity.
 type window struct {
-	name, topic     string
-	lines           []line
-	nicks           map[string]string // folded nick to nick with its mode prefix
-	unread, offset  int
-	nickOff         int // first visible member in this channel
-	pending         int // new lines received while scrolled back, measured on render
-	mention, joined bool
-	namesReceiving  bool
-	raw, server     bool
+	name, topic       string
+	lines             []line
+	nicks             map[string]string // folded nick to nick with its mode prefix
+	unread, offset    int
+	nickOff           int // first visible member in this channel
+	pending           int // new lines received while scrolled back, measured on render
+	mention, joined   bool
+	namesReceiving    bool
+	suppressJoinNames bool // hide the automatic NAMES reply until its 366
+	raw, server       bool
 }
 
 type connected struct {
@@ -676,6 +677,7 @@ func (m *Model) disconnect() {
 	for _, w := range m.windows {
 		w.joined = false
 		w.namesReceiving = false
+		w.suppressJoinNames = false
 		clear(w.nicks)
 	}
 }

@@ -108,6 +108,7 @@ func (m *Model) receive(e irc.Event) {
 		w.nicks[folded] = nick
 		if self {
 			w.joined = true
+			w.suppressJoinNames = true
 			m.selectWindow(i)
 		}
 		m.add(i, "", nick+" joined")
@@ -196,7 +197,9 @@ func (m *Model) receive(e irc.Event) {
 			n = irc.Clean(n)
 			w.nicks[irc.Fold(strings.TrimLeft(n, modePrefixes))] = n
 		}
-		m.addCode(i, code, "", "Names: "+a[3])
+		if !w.suppressJoinNames {
+			m.addCode(i, code, "", "Names: "+a[3])
+		}
 	case "366":
 		if len(a) < 2 {
 			return
@@ -206,6 +209,7 @@ func (m *Model) receive(e irc.Event) {
 			return
 		}
 		m.windows[i].namesReceiving = false
+		m.windows[i].suppressJoinNames = false
 	case "331":
 		if len(a) < 2 {
 			return

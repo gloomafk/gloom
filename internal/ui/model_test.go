@@ -50,6 +50,39 @@ func TestWindowsAndMembership(t *testing.T) {
 		t.Fatal("kick not tracked")
 	}
 }
+
+func TestJoinNamesLifecycle(t *testing.T) {
+	m := New("tester", false)
+	deliver(t, m, ":tester!u@gloom.im JOIN #one")
+	deliver(t, m, ":tester!u@gloom.im JOIN #two")
+	one, two := m.windows[m.find("#one")], m.windows[m.find("#two")]
+	deliver(t, m, ":irc.gloom.im 353 tester = #one :tester @alice")
+	deliver(t, m, ":irc.gloom.im 366 tester #one :End of names")
+	deliver(t, m, ":irc.gloom.im 353 tester = #two :tester +bob")
+	if len(one.lines) != 1 || len(two.lines) != 1 || two.nicks["bob"] != "+bob" {
+		t.Fatal("join names suppression must be independent for each channel")
+	}
+	deliver(t, m, ":alice!u@gloom.im JOIN #one")
+	deliver(t, m, ":irc.gloom.im 353 tester = #one :tester @alice")
+	if one.lines[len(one.lines)-1].code != "353" {
+		t.Fatal("another user's join must not suppress names output")
+	}
+	m.disconnect()
+	if one.suppressJoinNames || two.suppressJoinNames {
+		t.Fatal("disconnect must clear join names suppression")
+	}
+	deliver(t, m, ":tester!u@gloom.im JOIN #one")
+	before := len(one.lines)
+	deliver(t, m, ":irc.gloom.im 353 tester = #one :tester @alice")
+	if len(one.lines) != before || len(one.nicks) != 2 {
+		t.Fatal("rejoining must suppress the automatic names reply again")
+	}
+	deliver(t, m, ":irc.gloom.im 366 tester #one :End of names")
+	if one.suppressJoinNames || one.namesReceiving {
+		t.Fatal("end of names must clear names reply state")
+	}
+}
+
 func TestBoundedScrollbackAndLayout(t *testing.T) {
 	m := New("tester", false)
 	m.ensure("#gloom")
