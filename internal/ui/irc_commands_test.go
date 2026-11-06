@@ -52,6 +52,32 @@ func TestCommonCommandsOnWire(t *testing.T) {
 	m.client = client
 	m.selectWindow(m.ensure("#gloom"))
 	m.windows[m.active].joined = true
+	t.Run("names after joining", func(t *testing.T) {
+		deliver(t, m, ":tester!u@gloom.im JOIN #gloom")
+		w := m.current()
+		before := len(w.lines)
+		deliver(t, m, ":irc.gloom.im 353 tester = #gloom :tester @alice")
+		deliver(t, m, ":irc.gloom.im 353 tester = #gloom :+bob %carol")
+		deliver(t, m, ":irc.gloom.im 366 tester #gloom :End of names")
+		if len(w.lines) != before || len(w.nicks) != 4 || w.nicks["alice"] != "@alice" || w.nicks["carol"] != "%carol" {
+			t.Fatal("join names must populate the nicklist without adding messages")
+		}
+		m.command("/names #GLOOM")
+		if got := read(); got != "NAMES #GLOOM" {
+			t.Fatalf("got %q, want NAMES #GLOOM", got)
+		}
+		deliver(t, m, ":irc.gloom.im 353 tester = #GLOOM :tester @alice")
+		deliver(t, m, ":irc.gloom.im 353 tester = #GLOOM :+bob")
+		deliver(t, m, ":irc.gloom.im 366 tester #GLOOM :End of names")
+		if len(w.lines) != before+2 || len(w.nicks) != 3 {
+			t.Fatal("explicit names must display every reply and refresh the nicklist")
+		}
+		for _, l := range w.lines[before:] {
+			if l.code != "353" || !strings.HasPrefix(l.text, "Names: ") {
+				t.Fatalf("unexpected names output: %+v", l)
+			}
+		}
+	})
 	cases := []struct{ input, want string }{
 		{"/mode", "MODE #gloom"},
 		{"/mode +o alice", "MODE #gloom +o alice"},
