@@ -201,6 +201,32 @@ func TestCommandRepliesAndCompletion(t *testing.T) {
 	}
 }
 
+func TestTopicWhoTimeReply(t *testing.T) {
+	tests := []struct {
+		name, reply, want string
+	}{
+		{"full mask", ":irc.gloom.im 333 tester #gloom alice!~alice@user/alice 1793857477", "Topic set by alice!~alice@user/alice on 2026-11-05T05:44:37Z"},
+		{"nick only", ":irc.gloom.im 333 tester #gloom hatter 1498712220", "Topic set by hatter on 2017-06-29T04:57:00Z"},
+		{"invalid time", ":irc.gloom.im 333 tester #gloom alice soon", "Topic set by alice"},
+		{"missing time", ":irc.gloom.im 333 tester #gloom alice", "Topic set by alice"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New("tester", false)
+			i := m.ensure("#gloom")
+			server := len(m.windows[0].lines)
+			deliver(t, m, tt.reply)
+			lines := m.windows[i].lines
+			if len(lines) != 1 || lines[0].code != "333" || lines[0].text != tt.want {
+				t.Fatalf("channel lines = %+v, want 333 %q", lines, tt.want)
+			}
+			if len(m.windows[0].lines) != server {
+				t.Fatalf("server window got %+v", m.windows[0].lines)
+			}
+		})
+	}
+}
+
 func TestClearCurrentWindow(t *testing.T) {
 	m := New("tester", false)
 	i := m.ensure("#gloom")
