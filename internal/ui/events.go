@@ -241,6 +241,15 @@ func (m *Model) receive(e irc.Event) {
 		}
 		m.windows[i].topic = irc.Clean(a[2])
 		m.addCode(i, code, "", "Topic: "+a[2])
+	case "333":
+		if len(a) < 3 {
+			return
+		}
+		i, ok := m.channelWindow(a[1])
+		if !ok {
+			return
+		}
+		m.addCode(i, code, "", topicSetBy(a[2:]))
 	case "TOPIC":
 		if len(a) < 2 {
 			return
@@ -273,4 +282,18 @@ func (m *Model) receive(e irc.Event) {
 		}
 		m.addCode(m.serverWindow(), code, "", strings.Join(a, " "))
 	}
+}
+
+// topicSetBy describes an RPL_TOPICWHOTIME reply from its setter and Unix
+// time parameters. A missing or invalid time leaves only the setter.
+func topicSetBy(a []string) string {
+	text := "Topic set by " + a[0]
+	if len(a) < 2 {
+		return text
+	}
+	secs, err := strconv.ParseInt(a[1], 10, 64)
+	if err != nil || secs < 0 {
+		return text
+	}
+	return text + " on " + time.Unix(secs, 0).UTC().Format(time.RFC3339)
 }
