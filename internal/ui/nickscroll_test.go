@@ -218,3 +218,148 @@ func BenchmarkNicklistScroll(b *testing.B) {
 		m.View()
 	}
 }
+
+// ```gherkin
+// Scenario: Scroll steadily with a trackpad
+//
+//	Given a joined channel with more members than fit in the nicklist
+//	When the user swipes down over the nicklist with a trackpad
+//	And the swipe also produces sideways scroll events
+//	Then the nicklist moves down only, three rows per vertical event
+//	And it never jumps back towards earlier members
+//
+// ```
+func TestTrackpadSwipeScrollsNicklistSteadily(t *testing.T) {
+	m := nickScrollModel(t, 70)
+	m.channels = true
+	m.View()
+	w := m.current()
+	// A slightly diagonal swipe interleaves sideways events in both directions.
+	swipe := []tea.MouseButton{
+		tea.MouseWheelDown, tea.MouseWheelLeft,
+		tea.MouseWheelDown, tea.MouseWheelRight,
+		tea.MouseWheelLeft, tea.MouseWheelDown,
+	}
+	want := 0
+	for _, b := range swipe {
+		prev := w.nickOff
+		wheelAt(m, m.width-2, 2, b)
+		if b == tea.MouseWheelDown {
+			want += wheelRows
+		}
+		if w.nickOff < prev {
+			t.Fatalf("%v moved the nicklist back from %d to %d", b, prev, w.nickOff)
+		}
+		if w.nickOff != want {
+			t.Fatalf("after %v the nicklist is at %d, want %d", b, w.nickOff, want)
+		}
+	}
+	if w.offset != 0 || m.windowOff != 0 || m.tabOff > 1 {
+		t.Fatal("the nicklist swipe moved another area")
+	}
+	// Sideways events over the windows pane and the chat move nothing either.
+	m.ensure("#second")
+	m.ensure("#third")
+	for _, b := range []tea.MouseButton{tea.MouseWheelRight, tea.MouseWheelLeft, tea.MouseWheelRight} {
+		wheelAt(m, 1, 2, b)
+		wheelAt(m, m.paneL+2, 2, b)
+	}
+	if m.windowOff != 0 || w.offset != 0 || w.nickOff != want {
+		t.Fatal("sideways events scrolled a vertical list")
+	}
+}
+
+// ```gherkin
+// Scenario: Keep member rows current while scrolling
+//
+//	Given a nicklist that has been scrolled through
+//	When a NAMES reply changes a prefix, the user changes nick or the theme changes
+//	Then the visible rows show the new prefix, highlight and colours
+//
+// ```
+func TestNicklistRowsFollowChangesAfterScrolling(t *testing.T) {
+	m := nickScrollModel(t, 70)
+	nickColumn := func() []string {
+		rows := strings.Split(m.View().Content, "\n")
+		out := make([]string, 0, len(rows))
+		for _, r := range rows[:m.height-statusRows] {
+			out = append(out, ansi.Cut(r, m.width-m.paneR, m.width))
+		}
+		return out
+	}
+	row := func(name string) string {
+		for _, r := range nickColumn() {
+			if strings.Contains(ansi.Strip(r), name) {
+				return r
+			}
+		}
+		t.Fatalf("member %q is not visible", name)
+		return ""
+	}
+	// Scroll down and back so every early row is cached.
+	for range 5 {
+		wheelAt(m, m.width-2, 2, tea.MouseWheelDown)
+	}
+	for range 5 {
+		wheelAt(m, m.width-2, 2, tea.MouseWheelUp)
+	}
+	names := make([]string, 70)
+	for i := range names {
+		names[i] = fmt.Sprintf("user%04d", i)
+	}
+	names[3] = "+" + names[3]
+	deliver(t, m, ":irc.gloom.im 353 tester = #gloom :tester "+strings.Join(names, " "))
+	deliver(t, m, ":irc.gloom.im 366 tester #gloom :End of /NAMES list.")
+	if !strings.Contains(ansi.Strip(nickColumn()[1]), "+ user0003") {
+		t.Fatal("a new voice prefix did not reach the top of the cached list")
+	}
+
+	cols := m.nlCols - 1
+	if !strings.Contains(row("tester"), nickRow("tester", m.colors(), cols, "tester")) {
+		t.Fatal("the own nick is not highlighted")
+	}
+	deliver(t, m, ":tester!u@gloom.im NICK aaself")
+	if !strings.Contains(row("aaself"), nickRow("aaself", m.colors(), cols, "aaself")) {
+		t.Fatal("the new own nick is not highlighted")
+	}
+	if nickRow("aaself", m.colors(), cols, "aaself") == nickRow("aaself", m.colors(), cols, "tester") {
+		t.Fatal("the highlight is not visible in a row")
+	}
+
+	dark := row("user0002")
+	m.light = true
+	if row("user0002") == dark {
+		t.Fatal("a theme change kept the cached dark row")
+	}
+}
+
+// BenchmarkNicklistScrollRealistic scrolls a busy channel's nicklist beside
+// chat history at a common window size, as a trackpad swipe does.
+func BenchmarkNicklistScrollRealistic(b *testing.B) {
+	m := New("tester", false)
+	m.gfx = gfxNone
+	m.width, m.height = 200, 50
+	m.channels = true
+	m.selectWindow(m.ensure("#gloom"))
+	w := m.current()
+	for i := range 454 {
+		n := fmt.Sprintf("user%04d", i)
+		w.nicks[n] = n
+	}
+	for range 200 {
+		m.add(m.active, "user0000", "chat history line")
+	}
+	m.View()
+	button := tea.MouseWheelDown
+	b.ReportAllocs()
+	for b.Loop() {
+		if w.nickOff == 0 {
+			button = tea.MouseWheelDown
+		}
+		if w.nickOff >= len(w.nicks)-(m.height-statusRows-1) {
+			button = tea.MouseWheelUp
+		}
+		m.Update(tea.MouseWheelMsg{X: m.width - 2, Y: 1, Button: button})
+		m.View()
+	}
+}

@@ -479,6 +479,17 @@ type nickCache struct {
 	win   *window
 	sig   uint64
 	names []string
+	// rows holds styled rows by prefixed nick, filled as they are drawn, so a
+	// scroll restyles only rows not seen since the last membership change.
+	key  nickRowKey
+	rows map[string]string
+}
+
+// nickRowKey is everything a styled nicklist row depends on besides its nick.
+type nickRowKey struct {
+	p    palette
+	cols int
+	self string
 }
 
 // sortedNicks returns w's nicks, highest rank first and then by folded name.
@@ -501,7 +512,7 @@ func (m *Model) sortedNicks(w *window) []string {
 		}
 		return strings.Compare(irc.Fold(a), irc.Fold(b))
 	})
-	m.nickList = nickCache{w, sig, names}
+	m.nickList = nickCache{win: w, sig: sig, names: names}
 	return names
 }
 
@@ -519,23 +530,23 @@ func (m *Model) nickRows(w *window, p palette, height int) ([]string, []nickHit)
 	visible := max(0, height-1)
 	w.nickOff = max(0, min(w.nickOff, len(names)-visible))
 	end := min(len(names), w.nickOff+visible)
+	key := nickRowKey{p, cw, self}
+	if m.nickList.rows == nil || m.nickList.key != key {
+		m.nickList.key, m.nickList.rows = key, make(map[string]string, visible)
+	}
 	for _, n := range names[w.nickOff:end] {
-		pre, name := splitPrefix(n)
-		nameStyle := style(p.fg, p.bg)
-		if irc.Fold(name) == self {
-			nameStyle = style(p.accent, p.bg).Bold(true)
+		_, name := splitPrefix(n)
+		row, ok := m.nickList.rows[n]
+		if !ok {
+			row = nickRow(n, p, cw, self)
+			m.nickList.rows[n] = row
 		}
-		if pre == "" {
-			pre = " "
-		}
-		pre = pre[:1]
-		row := style(p.fg, p.bg).Render(" ") + style(p.prefixColor(pre), p.bg).Render(pre) + style(p.fg, p.bg).Render(" ") + nameStyle.Render(name)
 		if len(rows) < height {
 			// The whole row is the target, past the end of the name. Column 0
 			// is left out: a press there grabs the pane border.
 			hits = append(hits, nickHit{start: 1, end: nw, row: len(rows), nick: name})
 		}
-		rows = append(rows, fit(row, cw, p.bg))
+		rows = append(rows, row)
 	}
 	for len(rows) < height {
 		rows = append(rows, fit("", cw, p.bg))
@@ -552,6 +563,23 @@ func (m *Model) nickRows(w *window, p palette, height int) ([]string, []nickHit)
 	}
 	return rows, hits
 }
+
+// nickRow styles one member, with its highest mode prefix, to cols cells.
+// self is the user's own folded nick, which is highlighted.
+func nickRow(n string, p palette, cols int, self string) string {
+	pre, name := splitPrefix(n)
+	nameStyle := style(p.fg, p.bg)
+	if irc.Fold(name) == self {
+		nameStyle = style(p.accent, p.bg).Bold(true)
+	}
+	if pre == "" {
+		pre = " "
+	}
+	pre = pre[:1]
+	row := style(p.fg, p.bg).Render(" ") + style(p.prefixColor(pre), p.bg).Render(pre) + style(p.fg, p.bg).Render(" ") + nameStyle.Render(name)
+	return fit(row, cols, p.bg)
+}
+
 func (m *Model) topicBar(p palette, w *window, width int) string {
 	name, topic := w.name, w.topic
 	switch {

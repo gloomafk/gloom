@@ -615,22 +615,18 @@ func (m *Model) scrollMouse(v tea.MouseWheelMsg) {
 	if !m.fitsLayout() || v.X < 0 || v.X >= m.width || v.Y < 0 || v.Y >= m.height {
 		return
 	}
-	dir := 0
-	switch v.Button {
-	case tea.MouseWheelUp, tea.MouseWheelLeft:
-		dir = -1
-	case tea.MouseWheelDown, tea.MouseWheelRight:
-		dir = 1
-	default:
-		return
-	}
 	if v.Y >= m.height-statusRows {
-		if !m.statusWindows() {
+		dir := wheelDir(v.Button, true)
+		if dir == 0 || !m.statusWindows() {
 			return
 		}
 		m.tabOff = max(1, min(max(1, m.tabOff)+dir, len(m.windows)-1))
 		m.revealWindows = false
 		m.status() // Clamp against the rendered tab widths.
+		return
+	}
+	dir := wheelDir(v.Button, false)
+	if dir == 0 {
 		return
 	}
 	if m.paneL > 0 && v.X < m.paneL {
@@ -645,9 +641,30 @@ func (m *Model) scrollMouse(v tea.MouseWheelMsg) {
 		w.nickOff = max(0, min(w.nickOff+dir*wheelRows, len(w.nicks)-visible))
 		return
 	}
-	if v.Button == tea.MouseWheelUp || v.Button == tea.MouseWheelDown {
-		m.scroll(-dir * wheelRows)
+	m.scroll(-dir * wheelRows)
+}
+
+// wheelDir is the direction a wheel button moves a list: -1 back, 1 forward
+// and 0 for none. Vertical lists follow only up and down. A trackpad swipe
+// mixes sideways events into a vertical one, and counting those as vertical
+// made lists jump back and forth. The horizontal status tabs set across to
+// also follow left and right.
+func wheelDir(b tea.MouseButton, across bool) int {
+	switch b {
+	case tea.MouseWheelUp:
+		return -1
+	case tea.MouseWheelDown:
+		return 1
+	case tea.MouseWheelLeft:
+		if across {
+			return -1
+		}
+	case tea.MouseWheelRight:
+		if across {
+			return 1
+		}
 	}
+	return 0
 }
 
 // scroll moves the visible view by rows: positive towards older content,
