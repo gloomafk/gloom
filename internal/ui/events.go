@@ -78,7 +78,15 @@ func (m *Model) receive(e irc.Event) {
 		// A message for a window that does not exist opens one only within
 		// the limit. Past it, the message is shown in the server window.
 		overflow := false
-		if p.Command == "PRIVMSG" || isChannel(target) {
+		switch {
+		case p.Command == "NOTICE" && !isChannel(target):
+			// A private notice never opens a window, but it joins the
+			// sender's query window when one is open, such as a NickServ
+			// reply to a /msg.
+			if j := m.find(irc.Clean(target)); j >= 0 {
+				i = j
+			}
+		default:
 			switch j := m.find(irc.Clean(target)); {
 			case j >= 0:
 				i = j

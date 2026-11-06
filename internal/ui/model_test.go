@@ -240,6 +240,30 @@ func TestServerNoticesGoToServerWindow(t *testing.T) {
 	}
 }
 
+func TestPrivateNoticeJoinsOpenQueryWindow(t *testing.T) {
+	m := New("tester", false)
+	defer m.Close()
+	m.connect(irc.Config{Host: "irc.gloom.im", Port: "6667", Nick: "tester"})
+	deliver(t, m, ":irc.gloom.im 001 tester :Welcome")
+	query := m.ensure("nickserv")
+	server := len(m.windows[1].lines)
+	deliver(t, m, ":NickServ!NickServ@services.gloom.im NOTICE tester :Invalid NickServ command.")
+	lines := m.windows[query].lines
+	if len(lines) == 0 || lines[len(lines)-1].text != "Invalid NickServ command." {
+		t.Fatal("the notice did not land in the query window")
+	}
+	if len(m.windows[1].lines) != server {
+		t.Fatal("the notice also landed in the server window")
+	}
+	deliver(t, m, ":ChanServ!ChanServ@services.gloom.im NOTICE tester :no query open")
+	if m.find("ChanServ") >= 0 {
+		t.Fatal("a private notice opened a window")
+	}
+	if got := m.windows[1].lines[len(m.windows[1].lines)-1].text; got != "no query open" {
+		t.Fatalf("server window last line is %q, want the notice", got)
+	}
+}
+
 func TestLeavingAChannelClosesItsWindow(t *testing.T) {
 	m := New("tester", false)
 	deliver(t, m, ":tester!u@gloom.im JOIN #one")
