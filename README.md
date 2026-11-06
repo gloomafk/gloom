@@ -48,6 +48,6 @@ gloom -server HOST [-port PORT] [-tls] [-nick NICK]
 
 ## License
 
-Licensed under the [MIT License](https://opensource.org/licenses/MIT).
+Licensed under the [MIT License](https://opensource.org/licenses/MIT). See [LICENSE](./LICENSE) for details.
 
-Copyright (c) 2026-present gloom
+Copyright (c) 2026-present Gloom
