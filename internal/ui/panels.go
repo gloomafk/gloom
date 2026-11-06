@@ -160,10 +160,17 @@ func (m *Model) joinChannel(name string) {
 		m.note(m.active, "Invalid channel name.")
 		return
 	}
-	i := m.ensure(name)
-	if m.windows[i].joined || m.send("JOIN "+name) {
+	if i := m.find(name); i >= 0 && m.windows[i].joined {
 		m.selectWindow(i)
+		return
 	}
+	if !m.send("JOIN " + name) {
+		return
+	}
+	if m.pendingJoins == nil {
+		m.pendingJoins = map[string]bool{}
+	}
+	m.pendingJoins[irc.Fold(name)] = true
 }
 
 // The channel list is sorted when LIST finishes, not on every frame.

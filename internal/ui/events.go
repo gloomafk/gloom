@@ -39,6 +39,10 @@ func (m *Model) receive(e irc.Event) {
 	if slices.Contains(nickRefusals, p.Command) {
 		m.nickWin = nil
 	}
+	// Channel errors end a pending join without opening a window.
+	if code != "" && (code[0] == '4' || code[0] == '5') && len(a) > 1 {
+		delete(m.pendingJoins, irc.Fold(irc.Clean(a[1])))
+	}
 	switch p.Command {
 	case "001":
 		m.registered = true
@@ -78,7 +82,7 @@ func (m *Model) receive(e irc.Event) {
 			switch j := m.find(irc.Clean(target)); {
 			case j >= 0:
 				i = j
-			case m.refused[irc.Fold(irc.Clean(target))] || !m.allowAutoWindow():
+			case m.pendingJoins[irc.Fold(irc.Clean(target))] || m.refused[irc.Fold(irc.Clean(target))] || !m.allowAutoWindow():
 				overflow = true
 			default:
 				i = m.ensure(target)
@@ -93,9 +97,16 @@ func (m *Model) receive(e irc.Event) {
 		if len(a) < 1 {
 			return
 		}
-		// A join for a channel with no window was not asked for: /join opens
-		// its window first. The server may do that only a few times.
-		if self && m.find(irc.Clean(a[0])) < 0 && !m.allowServerJoin() {
+		channel := irc.Fold(irc.Clean(a[0]))
+		requested := m.pendingJoins[channel]
+		if self {
+			delete(m.pendingJoins, channel)
+			if requested {
+				delete(m.refused, channel)
+			}
+		}
+		// Only unsolicited joins consume the server's allowance.
+		if self && !requested && m.find(irc.Clean(a[0])) < 0 && !m.allowServerJoin() {
 			m.refuse(a[0])
 			m.note(m.serverWindow(), "Ignored a server join to "+a[0]+": the limit of "+strconv.Itoa(maxServerJoins)+" per connection is reached.")
 			return

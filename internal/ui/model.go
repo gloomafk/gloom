@@ -140,6 +140,7 @@ type Model struct {
 	rowsVersion       uint64
 	autoOpens         []time.Time     // when incoming messages last opened a window
 	serverJoins       int             // joins the server made without a /join, this connection
+	pendingJoins      map[string]bool // folded channels awaiting our JOIN echo
 	refused           map[string]bool // folded channels whose server join was refused
 	chatRows          messageCache
 	nickList          nickCache
@@ -660,6 +661,7 @@ func (m *Model) scroll(rows int) {
 	w.offset = max(0, w.offset+rows)
 }
 func (m *Model) disconnect() {
+	m.pendingJoins = nil
 	m.rowsVersion++
 	m.Close()
 	m.cancel, m.connectCtx = nil, nil
