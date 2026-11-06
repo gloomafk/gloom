@@ -39,6 +39,7 @@ type window struct {
 	lines             []line
 	nicks             map[string]string // folded nick to nick with its mode prefix
 	unread, offset    int
+	nickOff           int // first visible member in this channel
 	pending           int // new lines received while scrolled back, measured on render
 	mention, joined   bool
 	namesReceiving    bool
@@ -607,8 +608,8 @@ func (m *Model) submit() tea.Cmd {
 // wheelRows is how many rows one mouse wheel notch scrolls.
 const wheelRows = 3
 
-// scrollMouse routes a wheel event to the window navigation under the pointer,
-// or to the current view. Navigation scrolling never changes chat scrollback.
+// scrollMouse routes a wheel event to the pane under the pointer,
+// or to the current view. Pane scrolling never changes chat scrollback.
 func (m *Model) scrollMouse(v tea.MouseWheelMsg) {
 	if !m.fitsLayout() || v.X < 0 || v.X >= m.width || v.Y < 0 || v.Y >= m.height {
 		return
@@ -635,6 +636,12 @@ func (m *Model) scrollMouse(v tea.MouseWheelMsg) {
 		visible := max(1, m.height-statusRows-1)
 		m.windowOff = max(0, min(m.windowOff+dir*wheelRows, len(m.windows)-visible))
 		m.revealWindows = false
+		return
+	}
+	if m.paneR > 0 && v.X >= m.width-m.paneR {
+		w := m.current()
+		visible := max(1, m.height-statusRows-1)
+		w.nickOff = max(0, min(w.nickOff+dir*wheelRows, len(w.nicks)-visible))
 		return
 	}
 	if v.Button == tea.MouseWheelUp || v.Button == tea.MouseWheelDown {
