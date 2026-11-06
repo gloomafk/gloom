@@ -516,7 +516,10 @@ func (m *Model) nickRows(w *window, p palette, height int) ([]string, []nickHit)
 	rows := []string{fit(head, cw, p.bg)}
 	var hits []nickHit
 	self := irc.Fold(m.nick)
-	for _, n := range names[:min(len(names), max(0, height-1))] {
+	visible := max(0, height-1)
+	w.nickOff = max(0, min(w.nickOff, len(names)-visible))
+	end := min(len(names), w.nickOff+visible)
+	for _, n := range names[w.nickOff:end] {
 		pre, name := splitPrefix(n)
 		nameStyle := style(p.fg, p.bg)
 		if irc.Fold(name) == self {
