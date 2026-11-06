@@ -1,4 +1,4 @@
-# gloom [![Build](https://github.com/gloomafk/gloom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gloomafk/gloom/actions/workflows/ci.yml)
+# gloom [![Build](https://github.com/gloomafk/gloom/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/gloomafk/gloom/actions/workflows/ci.yml) [![Go](https://img.shields.io/badge/Go-1.27-00ADD8?logo=go&logoColor=white)](https://go.dev) [![License](https://img.shields.io/badge/License-MIT-blue.svg)](https://github.com/gloomafk/gloom/blob/main/LICENSE)
 
 <picture>
     <source media="(prefers-color-scheme: dark)"
