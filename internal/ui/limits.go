@@ -40,6 +40,7 @@ func (m *Model) allowServerJoin() bool {
 }
 
 func (m *Model) resetServerLimits() {
+	m.pendingJoins = nil
 	m.serverJoins = 0
 	m.refused = nil
 }
@@ -54,13 +55,14 @@ func (m *Model) refuse(channel string) {
 }
 
 // channelWindow returns the window for a channel named by the server. It
-// reports false when there is none and the channel was refused.
+// reports false when there is none and the channel was refused or is
+// still waiting for our JOIN echo.
 func (m *Model) channelWindow(name string) (int, bool) {
 	clean := irc.Clean(name)
 	if i := m.find(clean); i >= 0 {
 		return i, true
 	}
-	if m.refused[irc.Fold(clean)] {
+	if m.refused[irc.Fold(clean)] || m.pendingJoins[irc.Fold(clean)] {
 		return -1, false
 	}
 	return m.ensure(clean), true

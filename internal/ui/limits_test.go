@@ -102,10 +102,10 @@ func TestServerMayJoinThreeChannelsPerConnection(t *testing.T) {
 }
 
 func TestUserJoinDoesNotCountAsServerJoin(t *testing.T) {
-	m := New("tester", false)
+	m := joinModel(t)
 	for i := range maxServerJoins + 2 {
 		name := fmt.Sprintf("#mine%d", i)
-		m.ensure(name) // /join opens the window before the server answers
+		m.command("/join " + name)
 		deliver(t, m, ":tester!u@gloom.im JOIN "+name)
 		if !m.windows[m.find(name)].joined {
 			t.Fatalf("%s was not joined", name)

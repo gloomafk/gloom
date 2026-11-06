@@ -90,10 +90,7 @@ func (m *Model) command(s string) tea.Cmd {
 			m.note(m.active, "usage: /join #channel")
 			return nil
 		}
-		if !m.send("JOIN " + args[0]) {
-			return nil
-		}
-		m.selectWindow(m.ensure(args[0]))
+		m.joinChannel(args[0])
 	case "/part", "/leave":
 		target := m.current().name
 		reason := rest
