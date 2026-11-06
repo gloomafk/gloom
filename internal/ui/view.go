@@ -553,7 +553,7 @@ func (m *Model) nickRows(w *window, p palette, height int) ([]string, []nickHit)
 	return rows, hits
 }
 func (m *Model) topicBar(p palette, w *window, width int) string {
-	name, topic, right := w.name, w.topic, ""
+	name, topic := w.name, w.topic
 	switch {
 	case m.view == viewList:
 		name, topic = "channels", "/list on "+m.network
@@ -570,16 +570,9 @@ func (m *Model) topicBar(p palette, w *window, width int) string {
 		if m.registered && w == m.srv {
 			topic = m.network + " · connected as " + m.nick
 		}
-	case isChannel(w.name):
-		right = fmt.Sprintf("%d nicks", len(w.nicks))
 	}
+	// The nicklist title already shows the member count. The topic bar does not repeat it.
 	s := style(p.accent, p.panel).Bold(true).Render(" "+name) + style(p.fg, p.panel).Render("  "+topic)
-	if right != "" {
-		gap := width - ansi.StringWidth(s) - len(right) - 1
-		if gap >= 1 {
-			s += style(p.fg, p.panel).Render(strings.Repeat(" ", gap)) + style(p.dim, p.panel).Render(right+" ")
-		}
-	}
 	return fit(s, width, p.panel)
 }
 

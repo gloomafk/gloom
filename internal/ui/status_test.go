@@ -395,12 +395,15 @@ func TestTopicBarSitsBetweenSidePanes(t *testing.T) {
 	if got := ansi.Cut(top, 0, m.paneL); !strings.HasPrefix(got, " WINDOWS") || !strings.HasSuffix(got, "│") {
 		t.Errorf("top row left of the topic bar is %q, want the WINDOWS title and border", got)
 	}
-	if got := ansi.Cut(top, m.width-m.paneR, m.width); !strings.HasPrefix(got, "│ NICKS") {
-		t.Errorf("top row right of the topic bar is %q, want the nicklist border and NICKS title", got)
+	if got := ansi.Cut(top, m.width-m.paneR, m.width); !strings.HasPrefix(got, "│ NICKS") || !strings.HasSuffix(strings.TrimRight(got, " "), "1") {
+		t.Errorf("top row right of the topic bar is %q, want the nicklist border, NICKS title and count", got)
 	}
 	topic := ansi.Cut(top, m.paneL, m.width-m.paneR)
-	if !strings.HasPrefix(topic, " #gloom") || !strings.HasSuffix(topic, "nicks ") {
-		t.Errorf("topic bar is %q, want it to start right of the windows pane and end left of the nicklist", topic)
+	if !strings.HasPrefix(topic, " #gloom") || strings.Contains(topic, "nick") {
+		t.Errorf("topic bar is %q, want the channel name with no nick count", topic)
+	}
+	if ansi.StringWidth(topic) != m.width-m.paneR-m.paneL {
+		t.Errorf("topic bar width %d, want %d", ansi.StringWidth(topic), m.width-m.paneR-m.paneL)
 	}
 	clickAt(m, 2, 1, tea.MouseLeft)
 	if m.active != 0 {
