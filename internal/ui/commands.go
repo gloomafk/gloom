@@ -41,11 +41,15 @@ func (m *Model) command(s string) tea.Cmd {
 	}
 	switch name {
 	case "/help":
-		m.note(m.active, "/connect [-TLS] [-sasl-user account -sasl-pass password [-sasl-mech PLAIN]] host [port] | /server | /disconnect | /join #channel | /part [#channel] [reason] | /nick name | /query nick | /msg nick text | /theme [dark|light] | /config realname \"value\" | /close [-c | -m] (-c all channels, -m all messages) |/quit [reason] (leave the server) | /exit [reason] (leave gloom)")
+		m.note(m.active, "/connect [-TLS] [-pass password] [-sasl-user account -sasl-pass password [-sasl-mech PLAIN]] host [port] | /server | /disconnect | /join #channel | /part [#channel] [reason] | /nick name | /query nick | /msg nick text | /theme [dark|light] | /config realname \"value\" | /close [-c | -m] (-c all channels, -m all messages) |/quit [reason] (leave the server) | /exit [reason] (leave gloom)")
 		m.note(m.active, "/whois nick | /whowas nick [count [server]] | /names [#channel] | /list [#channel] | /who [mask] | /notice target text | /topic [#channel] [text] | /kick [#channel] nick [reason] | /leave (alias /part) | /privmsg (alias /msg)")
 		m.note(m.active, "/clear | /mode [target] [modes [args]] | /invite nick [#channel] | /motd [server] | /away [message] (no message clears away) | /quote data (send raw data to the server)")
 		m.note(m.active, "/splash | PgUp/PgDn or wheel scroll | drag to copy | Tab complete | Up/Down history | Ctrl+C quit")
 	case "/connect", "/server":
+		if irc.Clean(s) != s {
+			m.note(m.active, "Invalid connection command: no control characters.")
+			return nil
+		}
 		if m.nick == "" {
 			m.note(m.active, "Set a nickname first: /nick name")
 			return nil

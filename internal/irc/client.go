@@ -42,6 +42,8 @@ type Config struct {
 	// Realname is sent in the USER line. When empty, the nick is sent, so the
 	// server learns nothing about the client.
 	Realname string
+	// Password is the optional server password sent with PASS before registration.
+	Password string
 	TLS      bool
 	// SASL authenticates during registration when it holds credentials.
 	SASL SASL
@@ -108,15 +110,15 @@ func NewConfig(host, port string, useTLS bool, nick string) (Config, error) {
 }
 
 // ConnectUsage describes the arguments of /connect.
-const ConnectUsage = "usage: /connect [-TLS] [-sasl-user account -sasl-pass password [-sasl-mech PLAIN]] host [port]"
+const ConnectUsage = "usage: /connect [-TLS] [-pass password] [-sasl-user account -sasl-pass password [-sasl-mech PLAIN]] host [port]"
 
 // ParseAddress reads the arguments of /connect: options, then host [port].
-// The options are -TLS and the SASL credentials -sasl-user, -sasl-pass and
+// The options are -TLS, -pass and the SASL credentials -sasl-user, -sasl-pass and
 // -sasl-mech, in any order.
 func ParseAddress(args []string, nick string) (Config, error) {
 	usage := errors.New(ConnectUsage)
 	useTLS := false
-	var mechanism, user, pass string
+	var mechanism, user, pass, password string
 	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
 		option := strings.ToLower(args[0])
 		if option == "-tls" {
@@ -128,6 +130,11 @@ func ParseAddress(args []string, nick string) (Config, error) {
 			return Config{Port: "6667", Nick: nick}, usage
 		}
 		switch option {
+		case "-pass":
+			if args[1] == "" {
+				return Config{}, usage
+			}
+			password = args[1]
 		case "-sasl-user":
 			user = args[1]
 		case "-sasl-pass":
@@ -142,17 +149,27 @@ func ParseAddress(args []string, nick string) (Config, error) {
 	if len(args) < 1 || len(args) > 2 {
 		return Config{Port: "6667", Nick: nick}, usage
 	}
+	if !ValidPassword(password) {
+		return Config{}, errors.New("invalid server password")
+	}
 	port := ""
 	if len(args) == 2 {
 		port = args[1]
 	}
 	c, err := NewConfig(args[0], port, useTLS, nick)
+	c.Password = password
 	if err != nil || mechanism+user+pass == "" {
 		return c, err
 	}
 	// UseSASL changes c, so it runs before c is returned.
 	err = c.UseSASL(mechanism, user, pass)
 	return c, err
+}
+
+// ValidPassword reports whether an optional password fits a PASS trailing
+// parameter without control characters or terminal escapes.
+func ValidPassword(s string) bool {
+	return ValidLine("PASS :"+s) && Clean(s) == s
 }
 
 // Dial connects, verifying the server certificate when TLS is on, and starts
@@ -169,6 +186,9 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 		if err := c.UseSASL(c.SASL.Mechanism, c.SASL.User, c.SASL.Pass); err != nil {
 			return nil, err
 		}
+	}
+	if !ValidPassword(c.Password) {
+		return nil, errors.New("invalid server password")
 	}
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	dial := dialer.DialContext
@@ -196,6 +216,12 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 		close(client.Events)
 		close(client.Raw)
 	}()
+	if c.Password != "" {
+		if err := client.Send("PASS :" + c.Password); err != nil {
+			client.Close()
+			return nil, err
+		}
+	}
 	_ = client.Send("NICK " + c.Nick)
 	_ = client.Send("USER " + c.Nick + " 0 * :" + realname)
 	return client, nil
@@ -305,6 +331,9 @@ func (c *Client) Quit(reason string) error {
 func (c *Client) Close() { c.once.Do(func() { close(c.done); _ = c.conn.Close() }) }
 
 func (c *Client) tap(l Line) {
+	if m, err := ParseMessage(l.Text); err == nil && m.Command == "PASS" {
+		l.Text = "PASS (password hidden)"
+	}
 	select {
 	case c.Raw <- l:
 	default:

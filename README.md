@@ -43,7 +43,7 @@ go build -o gloom ./cmd/gloom
 ## Usage
 
 ```sh
-gloom -server HOST [-port PORT] [-tls] [-nick NICK]
+gloom -server HOST [-port PORT] [-tls] [-nick NICK] [-pass PASSWORD]
       [-sasl-user ACCOUNT -sasl-pass PASSWORD [-sasl-mech PLAIN]]
 ```
 

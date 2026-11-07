@@ -20,6 +20,7 @@ func run() int {
 	server := flag.String("server", "", "IRC server (start disconnected when omitted)")
 	port := flag.String("port", "", "IRC port (6667 TCP, 6697 TLS)")
 	nick := flag.String("nick", "", "nickname (needed before connecting)")
+	password := flag.String("pass", "", "server password (visible in process arguments)")
 	secure := flag.Bool("tls", false, "connect with verified TLS")
 	saslUser := flag.String("sasl-user", "", "SASL account (needs -tls and -sasl-pass)")
 	saslPass := flag.String("sasl-pass", "", "SASL password")
@@ -39,6 +40,14 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "gloom: SASL options need -server")
 		return 2
 	}
+	if !irc.ValidPassword(*password) {
+		fmt.Fprintln(os.Stderr, "gloom: invalid server password")
+		return 2
+	}
+	if *password != "" && *server == "" {
+		fmt.Fprintln(os.Stderr, "gloom: -pass needs -server")
+		return 2
+	}
 	m := ui.New(*nick, *light)
 	defer m.Close()
 	if *server != "" {
@@ -54,6 +63,7 @@ func run() int {
 			fmt.Fprintln(os.Stderr, err)
 			return 2
 		}
+		c.Password = *password
 		m.Start = &c
 	}
 	_, err := tea.NewProgram(m).Run()
