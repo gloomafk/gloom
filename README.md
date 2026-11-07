@@ -47,12 +47,6 @@ gloom -server HOST [-port PORT] [-tls] [-nick NICK] [-pass PASSWORD]
       [-sasl-user ACCOUNT -sasl-pass PASSWORD [-sasl-mech PLAIN]]
 ```
 
-Use `/connect [-TLS] [-pass PASSWORD] host [port]` inside Gloom; `/server`
-is an alias. Combine `-pass` with the SASL options when both are required.
-Use TLS to protect passwords in transit. CLI passwords can appear in shell
-history and process arguments; connection commands stay out of input history
-and PASS is hidden in debug traffic.
-
 ## License
 
 Licensed under the [MIT License](https://opensource.org/licenses/MIT). See [LICENSE](./LICENSE) for details.
