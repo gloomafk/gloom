@@ -227,6 +227,36 @@ func TestTopicWhoTimeReply(t *testing.T) {
 	}
 }
 
+func TestTopicChangeShowsLine(t *testing.T) {
+	tests := []struct {
+		name, raw, topic, want string
+	}{
+		{"set", ":alice!u@gloom.im TOPIC #gloom :release day", "release day", "alice changed the topic to: release day"},
+		{"cleared", ":alice!u@gloom.im TOPIC #gloom :", "", "alice cleared the topic"},
+		{"only control characters", ":alice!u@gloom.im TOPIC #gloom :\x07", "", "alice cleared the topic"},
+		{"control characters", ":alice!u@gloom.im TOPIC #gloom :release\x1b[2J\x07day", "releaseday", "alice changed the topic to: releaseday"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := New("tester", false)
+			i := m.ensure("#gloom")
+			m.windows[i].topic = "old topic"
+			server := len(m.windows[0].lines)
+			deliver(t, m, tt.raw)
+			w := m.windows[i]
+			if w.topic != tt.topic {
+				t.Fatalf("topic = %q, want %q", w.topic, tt.topic)
+			}
+			if len(w.lines) != 1 || w.lines[0].text != tt.want {
+				t.Fatalf("channel lines = %+v, want %q", w.lines, tt.want)
+			}
+			if len(m.windows[0].lines) != server {
+				t.Fatalf("server window got %+v", m.windows[0].lines)
+			}
+		})
+	}
+}
+
 func TestClearCurrentWindow(t *testing.T) {
 	m := New("tester", false)
 	i := m.ensure("#gloom")

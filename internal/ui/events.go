@@ -266,7 +266,13 @@ func (m *Model) receive(e irc.Event) {
 		if !ok {
 			return
 		}
-		m.windows[i].topic = irc.Clean(a[1])
+		topic := irc.Clean(a[1])
+		m.windows[i].topic = topic
+		if topic == "" {
+			m.add(i, "", nick+" cleared the topic")
+			return
+		}
+		m.add(i, "", nick+" changed the topic to: "+topic)
 	case "MODE":
 		if len(a) < 2 || !isChannel(a[0]) {
 			return
