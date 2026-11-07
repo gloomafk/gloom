@@ -391,7 +391,11 @@ func (c *Client) readLoop() {
 			continue
 		}
 		if c.sasl != nil {
-			consumed, notice := c.handleSASL(m)
+			consumed, notice, err := c.handleSASL(m)
+			if err != nil {
+				c.emit(Event{Err: err})
+				return
+			}
 			if notice != "" {
 				c.emit(Event{Notice: notice})
 			}

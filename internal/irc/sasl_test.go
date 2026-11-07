@@ -440,6 +440,38 @@ func TestSASLRejectsUntrustedTLSCertificate(t *testing.T) {
 	}
 }
 
+func TestSASLQueueFailureEndsNegotiation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		step saslStep
+		line string
+	}{
+		{name: "request", step: stepListing, line: ":irc.gloom.im CAP * LS :sasl"},
+		{name: "mechanism", step: stepRequested, line: ":irc.gloom.im CAP * ACK :sasl"},
+		{name: "payload", step: stepMechanism, line: "AUTHENTICATE +"},
+		{name: "end", step: stepPayload, line: ":irc.gloom.im 903 tester :Success"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			c := &Client{out: make(chan outgoing, 1), done: make(chan struct{})}
+			c.sasl = c.newNegotiation(SASL{User: "account", Pass: "secret"})
+			defer c.sasl.stop()
+			c.sasl.step = tc.step
+			c.out <- outgoing{line: "PRIVMSG #gloom :queued"}
+			m, err := ParseMessage(tc.line)
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, notice, err := c.handleSASL(m)
+			if !errors.Is(err, ErrQueueFull) || notice != "" {
+				t.Fatalf("queue failure returned notice %q, error %v", notice, err)
+			}
+			if c.sasl.step != stepDone || c.sasl.creds != (SASL{}) {
+				t.Fatal("failed exchange retained credentials or remained active")
+			}
+		})
+	}
+}
+
 func TestSASLPlainChunkedExchange(t *testing.T) {
 	for _, size := range []int{297, 298, 510} {
 		t.Run(fmt.Sprint(size), func(t *testing.T) {
@@ -478,5 +510,58 @@ func TestSASLPlainChunkedExchange(t *testing.T) {
 				t.Fatal(err)
 			}
 		})
+	}
+}
+
+func TestSASLTimerResumesRegistration(t *testing.T) {
+	conf, served := converse(t, script(
+		"> CAP END",
+		"< :irc.gloom.im 001 tester :Welcome",
+	))
+	c, err := Dial(t.Context(), conf)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer c.Close()
+	c.sasl.mu.Lock()
+	c.sasl.timer.Reset(20 * time.Millisecond)
+	c.sasl.mu.Unlock()
+	notices, _ := untilWelcome(t, c)
+	if !slices.Equal(notices, []string{"SASL authentication timed out. Continuing without authentication."}) {
+		t.Fatalf("timeout notices = %q", notices)
+	}
+	if err := <-served; err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSASLQueueFailureDisconnects(t *testing.T) {
+	conn, peer := net.Pipe()
+	defer peer.Close()
+	c := &Client{conn: conn, Events: make(chan Event, 4), Raw: make(chan Line, 4), out: make(chan outgoing, 1), done: make(chan struct{})}
+	defer c.Close()
+	c.sasl = c.newNegotiation(SASL{User: "account", Pass: "secret"})
+	c.out <- outgoing{line: "PRIVMSG #gloom :queued"}
+	stopped := make(chan struct{})
+	go func() {
+		defer close(stopped)
+		c.readLoop()
+	}()
+	_ = peer.SetDeadline(time.Now().Add(5 * time.Second))
+	if _, err := fmt.Fprint(peer, ":irc.gloom.im CAP * LS :sasl\r\n"); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("queue failure did not stop the reader")
+	}
+	if event := <-c.Events; !errors.Is(event.Err, ErrQueueFull) {
+		t.Fatalf("queue failure event = %+v", event)
+	}
+	select {
+	case <-c.done:
+	default:
+		t.Fatal("queue failure left the connection open")
 	}
 }

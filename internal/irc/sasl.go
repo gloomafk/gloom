@@ -111,6 +111,7 @@ type negotiation struct {
 	creds      SASL
 	listed     bool   // the server offers sasl
 	mechanisms string // the mechanisms in the sasl capability value, if any
+	err        error
 	timer      *time.Timer
 }
 
@@ -157,9 +158,13 @@ func (c *Client) saslTimedOut() {
 		return
 	}
 	if n.step == stepMechanism || n.step == stepPayload {
-		_ = c.enqueue(c.out, "AUTHENTICATE *")
+		c.queueSASL(outgoing{line: "AUTHENTICATE *"})
 	}
-	c.emit(Event{Notice: c.finishSASL("SASL authentication timed out." + continueWithout)})
+	notice := c.finishSASL("SASL authentication timed out." + continueWithout)
+	c.emit(Event{Notice: notice, Err: n.err})
+	if n.err != nil {
+		c.Close()
+	}
 }
 
 // stop releases the timer and the credentials when the connection ends.
@@ -173,16 +178,39 @@ func (n *negotiation) stop() {
 // status window. The caller holds the lock.
 func (c *Client) finishSASL(notice string) string {
 	c.sasl.end()
-	_ = c.enqueue(c.out, "CAP END")
+	if !c.queueSASL(outgoing{line: "CAP END"}) {
+		return ""
+	}
 	return notice
+}
+
+// queueSASL records failures of protocol-critical writes. The caller holds
+// the negotiation lock and reports the error before ending the connection.
+func (c *Client) queueSASL(message outgoing) bool {
+	if c.sasl.err != nil {
+		return false
+	}
+	if err := c.queue(c.out, message); err != nil {
+		c.sasl.err = err
+		c.sasl.end()
+		return false
+	}
+	return true
 }
 
 // handleSASL processes one message during negotiation. It reports whether
 // the message was consumed, and returns a notice for the status window.
-func (c *Client) handleSASL(m *Message) (consumed bool, notice string) {
+func (c *Client) handleSASL(m *Message) (bool, string, error) {
 	n := c.sasl
 	n.mu.Lock()
 	defer n.mu.Unlock()
+	consumed, notice := c.negotiateSASL(m)
+	return consumed, notice, n.err
+}
+
+// negotiateSASL advances the exchange while the caller holds its lock.
+func (c *Client) negotiateSASL(m *Message) (consumed bool, notice string) {
+	n := c.sasl
 	switch m.Command {
 	case "CAP":
 		// After negotiation, CAP NEW and CAP DEL from cap-notify are not
@@ -197,7 +225,9 @@ func (c *Client) handleSASL(m *Message) (consumed bool, notice string) {
 		}
 		n.step = stepPayload
 		for _, line := range authenticateLines(plainPayload(n.creds)) {
-			_ = c.queue(c.out, outgoing{line: line, hidden: true})
+			if !c.queueSASL(outgoing{line: line, hidden: true}) {
+				break
+			}
 		}
 		return true, ""
 	}
@@ -259,13 +289,13 @@ func (c *Client) saslCap(sub string, params []string) string {
 			return c.finishSASL("The server does not offer SASL PLAIN, only " + Clean(n.mechanisms) + "." + continueWithout)
 		}
 		n.step = stepRequested
-		_ = c.enqueue(c.out, "CAP REQ :sasl")
+		c.queueSASL(outgoing{line: "CAP REQ :sasl"})
 	case "ACK":
 		if n.step != stepRequested || !capListed(params[len(params)-1], "sasl") {
 			return ""
 		}
 		n.step = stepMechanism
-		_ = c.enqueue(c.out, "AUTHENTICATE "+mechanismPlain)
+		c.queueSASL(outgoing{line: "AUTHENTICATE " + mechanismPlain})
 	case "NAK":
 		if n.step != stepRequested {
 			return ""
