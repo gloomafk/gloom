@@ -135,6 +135,10 @@ func TestCommonCommandsOnWire(t *testing.T) {
 		{"/kick #other bob be nice", "KICK #other bob :be nice"},
 		{"/leave #gloom goodbye friends", "PART #gloom :goodbye friends"},
 		{"/part goodbye friends", "PART #gloom :goodbye friends"},
+		{"/quote VERSION", "VERSION"},
+		{"/quote cap ls 302", "cap ls 302"},
+		{"/quote PRIVMSG #other :two  spaces kept ", "PRIVMSG #other :two  spaces kept "},
+		{"/QUOTE   ping :x", "ping :x"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
@@ -144,7 +148,7 @@ func TestCommonCommandsOnWire(t *testing.T) {
 			}
 		})
 	}
-	for _, input := range []string{"/invite", "/invite alice bad", "/motd a b", "/mode :bad", "/away hello\r\nQUIT", "/whois", "/whois :bad", "/whowas alice -1", "/whowas alice nope", "/names #gloom,", "/list a b c", "/notice alice", "/kick", "/kick #gloom :bad", "/notice alice hello\r\nQUIT", "/topic bad\x00topic", "/me waves", "/msg alice \x01VERSION\x01", "/privmsg alice prefix\x01ACTION waves\x01", "/notice alice \x01PING probe\x01", "\x01DCC SEND file 2130706433 1234 1\x01"} {
+	for _, input := range []string{"/invite", "/invite alice bad", "/motd a b", "/mode :bad", "/away hello\r\nQUIT", "/whois", "/whois :bad", "/whowas alice -1", "/whowas alice nope", "/names #gloom,", "/list a b c", "/notice alice", "/kick", "/kick #gloom :bad", "/notice alice hello\r\nQUIT", "/topic bad\x00topic", "/me waves", "/msg alice \x01VERSION\x01", "/privmsg alice prefix\x01ACTION waves\x01", "/notice alice \x01PING probe\x01", "/quote", "/quote   ", "/quote PING a\r\nQUIT", "/quote PING a\nQUIT", "/quote PING \x00", "/quote PRIVMSG alice :\x01VERSION\x01", "/quote " + strings.Repeat("a", 600), "\x01DCC SEND file 2130706433 1234 1\x01"} {
 		m.command(input)
 	}
 	// A valid command after rejected input confirms no rejected command reached the wire.
@@ -192,7 +196,7 @@ func TestCommandRepliesAndCompletion(t *testing.T) {
 	if w.topic != "" {
 		t.Fatal("stale topic retained")
 	}
-	for _, command := range []string{"/whois", "/names", "/list", "/who", "/msg", "/notice", "/topic", "/kick", "/leave", "/whowas", "/privmsg", "/clear", "/mode", "/invite", "/motd", "/away"} {
+	for _, command := range []string{"/whois", "/names", "/list", "/who", "/msg", "/notice", "/topic", "/kick", "/leave", "/whowas", "/privmsg", "/clear", "/mode", "/invite", "/motd", "/away", "/quote"} {
 		m.input.SetValue(command[:len(command)-1])
 		m.complete()
 		if m.input.Value() != command+" " {
@@ -433,5 +437,18 @@ func TestNickChangeIsReportedWhereTyped(t *testing.T) {
 	deliver(t, m, ":dave!u@gloom.im NICK frank")
 	if last(m, channel) != "carol is now dave" || m.nickWin != nil {
 		t.Fatal("a refused change kept its window for a later one")
+	}
+}
+
+func TestQuoteFeedback(t *testing.T) {
+	m := New("tester", false)
+	last := func() string { w := m.current(); return w.lines[len(w.lines)-1].text }
+	m.command("/quote")
+	if got := last(); got != "usage: /quote data" {
+		t.Fatalf("got %q, want usage", got)
+	}
+	m.command("/quote VERSION")
+	if got := last(); got != notConnected {
+		t.Fatalf("got %q, want %q", got, notConnected)
 	}
 }

@@ -11,7 +11,7 @@ import (
 var commandNames = []string{
 	"/connect", "/server", "/join", "/part", "/nick", "/msg", "/query", "/quit", "/exit", "/help", "/theme",
 	"/disconnect", "/close", "/whois", "/whowas", "/names", "/list", "/who", "/notice", "/topic", "/kick",
-	"/leave", "/privmsg", "/clear", "/splash", "/mode", "/invite", "/motd", "/away", "/config",
+	"/leave", "/privmsg", "/clear", "/splash", "/mode", "/invite", "/motd", "/away", "/config", "/quote",
 }
 
 func (m *Model) command(s string) tea.Cmd {
@@ -30,6 +30,12 @@ func (m *Model) command(s string) tea.Cmd {
 		return true
 	}
 	name := strings.ToLower(cmd)
+	if name == "/quote" {
+		// Raw data is sent as typed, so it skips the trimmed rest.
+		_, data, _ := strings.Cut(s, " ")
+		m.quote(strings.TrimLeft(data, " "))
+		return nil
+	}
 	if m.ircCommand(name, rest) {
 		return nil
 	}
@@ -37,7 +43,7 @@ func (m *Model) command(s string) tea.Cmd {
 	case "/help":
 		m.note(m.active, "/connect [-TLS] host [port] | /server | /disconnect | /join #channel | /part [#channel] [reason] | /nick name | /query nick | /msg nick text | /theme [dark|light] | /config realname \"value\" | /close [-c | -m] (-c all channels, -m all messages) |/quit [reason] (leave the server) | /exit [reason] (leave gloom)")
 		m.note(m.active, "/whois nick | /whowas nick [count [server]] | /names [#channel] | /list [#channel] | /who [mask] | /notice target text | /topic [#channel] [text] | /kick [#channel] nick [reason] | /leave (alias /part) | /privmsg (alias /msg)")
-		m.note(m.active, "/clear | /mode [target] [modes [args]] | /invite nick [#channel] | /motd [server] | /away [message] (no message clears away)")
+		m.note(m.active, "/clear | /mode [target] [modes [args]] | /invite nick [#channel] | /motd [server] | /away [message] (no message clears away) | /quote data (send raw data to the server)")
 		m.note(m.active, "/splash | PgUp/PgDn or wheel scroll | drag to copy | Tab complete | Up/Down history | Ctrl+C quit")
 	case "/connect", "/server":
 		if m.nick == "" {
