@@ -30,6 +30,16 @@ func ircLine(verb string, args ...string) string {
 	return verb + " " + strings.Join(args, " ")
 }
 
+// quote sends data to the server as one line, exactly as typed. The client
+// only refuses data that would not fit one line or would inject another.
+func (m *Model) quote(data string) {
+	if data == "" {
+		m.note(m.active, "usage: /quote data")
+		return
+	}
+	m.send(data)
+}
+
 // ircCommand handles server commands without interpreting free text as options.
 func (m *Model) ircCommand(cmd, rest string) bool {
 	args := strings.Fields(rest)
