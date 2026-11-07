@@ -205,6 +205,7 @@ func (m *Model) Init() tea.Cmd {
 		cmds = append(cmds, m.connect(*m.Start))
 		// connect has its own copy, so the start config drops the password.
 		m.Start.SASL = irc.SASL{}
+		m.Start.Password = ""
 	}
 	return tea.Batch(cmds...)
 }
@@ -231,6 +232,7 @@ func (m *Model) connect(c irc.Config) tea.Cmd {
 		defer cancelDial()
 		client, err := irc.Dial(dialCtx, c)
 		c.SASL = irc.SASL{}
+		c.Password = ""
 		result := connected{client: client, config: c, err: err, ctx: ctx}
 		if client != nil {
 			// A command's result can be discarded when Bubble Tea stops. Until
@@ -457,6 +459,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// The client holds the credentials for negotiation. The model
 		// keeps no copy.
 		m.conf.SASL = irc.SASL{}
+		m.conf.Password = ""
 		m.registered = false
 		m.away = false
 		m.note(m.serverWindow(), "Transport connected; registering...")
@@ -613,6 +616,12 @@ func (m *Model) submit() tea.Cmd {
 	m.draft = ""
 	// Connection and exit commands also run locally in the raw traffic window.
 	if connection {
+		// Preserve tab-separated commands without normalizing unsafe passwords.
+		text := strings.ReplaceAll(s, "\t", " ")
+		if irc.Clean(text) != text {
+			m.note(m.active, "Invalid connection command: no control characters.")
+			return nil
+		}
 		return m.command(strings.Join(fields, " "))
 	}
 	verb, _, _ = strings.Cut(s, " ")
