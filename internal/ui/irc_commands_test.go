@@ -169,6 +169,43 @@ func TestCommonCommandsOnWire(t *testing.T) {
 	if got := read(); got != "NAMES" {
 		t.Fatal(got)
 	}
+
+	t.Run("invite from server and query windows", func(t *testing.T) {
+		server := m.openServer("irc.gloom.im")
+		for _, i := range []int{server, m.ensure("bob")} {
+			m.selectWindow(i)
+			m.command("/invite alice #other")
+			if got := read(); got != "INVITE alice #other" {
+				t.Fatalf("got %q, want INVITE alice #other", got)
+			}
+			m.command("/invite alice")
+			if got := strings.TrimSpace(lastLine(m, i)); got != "usage: /invite nick [#channel]" {
+				t.Fatalf("missing channel feedback: %q", got)
+			}
+			m.command("/whois sentinel")
+			if got := read(); got != "WHOIS sentinel" {
+				t.Fatalf("invalid invite reached server: %q", got)
+			}
+		}
+	})
+
+	t.Run("invalid invites", func(t *testing.T) {
+		m.selectWindow(m.find("#gloom"))
+		for _, input := range []string{
+			"/invite", "/invite alice bad", "/invite alice #other extra",
+			"/invite :alice #other", "/invite alice,bob #other",
+			"/invite alice #other\r\nQUIT", "/invite alice #other\x00",
+		} {
+			m.command(input)
+			if got := strings.TrimSpace(lastLine(m, m.active)); got != "usage: /invite nick [#channel]" {
+				t.Fatalf("%q: got %q, want usage", input, got)
+			}
+		}
+		m.command("/whois sentinel")
+		if got := read(); got != "WHOIS sentinel" {
+			t.Fatalf("invalid invite reached server: %q", got)
+		}
+	})
 }
 
 func TestCommandRepliesAndCompletion(t *testing.T) {
