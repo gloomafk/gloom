@@ -597,14 +597,21 @@ func (m *Model) submit() tea.Cmd {
 	if s == "" {
 		return nil
 	}
-	m.history = append(m.history, s)
-	if len(m.history) > maxHistory {
-		m.history = slices.Delete(m.history, 0, 1)
+	// Connection options may contain credentials, including malformed input.
+	// Keep the whole command out of recall rather than retaining a password.
+	fields := strings.Fields(s)
+	verb := strings.ToLower(fields[0])
+	connection := verb == "/connect" || verb == "/server"
+	if !connection {
+		m.history = append(m.history, s)
+		if len(m.history) > maxHistory {
+			m.history = slices.Delete(m.history, 0, 1)
+		}
 	}
 	m.historyAt = len(m.history)
 	m.draft = ""
 	// Exit commands belong to the client, including in the raw traffic window.
-	verb, _, _ := strings.Cut(s, " ")
+	verb, _, _ = strings.Cut(s, " ")
 	if strings.EqualFold(verb, "/exit") || strings.EqualFold(verb, "/quit") {
 		return m.command(s)
 	}

@@ -67,3 +67,20 @@ func TestStartConfigDropsSASLPasswordAfterInit(t *testing.T) {
 		t.Fatalf("start config kept %+v", m.Start.SASL)
 	}
 }
+
+func TestConnectCredentialsStayOutOfHistory(t *testing.T) {
+	for _, verb := range []string{"/connect", "/SERVER", "/connect\t"} {
+		for _, debug := range []bool{false, true} {
+			m := sized(120, 24)
+			t.Cleanup(m.Close)
+			if debug {
+				m.toggleDebug()
+			}
+			m.input.SetValue(verb + " -sasl-user account -sasl-pass secret irc.gloom.im")
+			m.submit()
+			if len(m.history) != 0 || m.input.Value() != "" || m.draft != "" {
+				t.Fatal("connection command retained in input history")
+			}
+		}
+	}
+}

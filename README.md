@@ -55,6 +55,7 @@ need TLS, and PLAIN is the only mechanism. From inside gloom:
 ```
 
 Gloom never writes the credentials to disk, and the debug window hides them.
+`/connect` and `/server` commands are excluded from input history.
 If the server rejects them, gloom reports why in the server window and
 registers without an account, unless the server requires one. A password on
 the command line can be visible to other users of the machine in the process
