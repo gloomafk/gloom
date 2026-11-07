@@ -183,7 +183,7 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 	if c.SASL.Enabled() {
 		// Set before the loops start, which read it. CAP LS goes first, so
 		// the server holds registration until negotiation ends.
-		client.sasl = client.newNegotiation(c.SASL)
+		client.startNegotiation(c.SASL, saslTimeout)
 		_ = client.Send("CAP LS 302")
 	}
 	var loops sync.WaitGroup

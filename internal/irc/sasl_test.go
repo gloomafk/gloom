@@ -244,6 +244,11 @@ func TestSASLEndsWithoutAuthentication(t *testing.T) {
 			notice: "The server refused the SASL capability. Continuing without authentication.",
 		},
 		{
+			name:   "capability not acknowledged",
+			steps:  []string{"< :irc.gloom.im CAP * LS :sasl", "> CAP REQ :sasl", "< :irc.gloom.im CAP * ACK :multi-prefix", "> CAP END"},
+			notice: "The server did not acknowledge the SASL capability. Continuing without authentication.",
+		},
+		{
 			name:   "no capability negotiation",
 			steps:  []string{"< :irc.gloom.im 421 tester CAP :Unknown command"},
 			notice: "The server does not support capability negotiation. Continuing without authentication.",
@@ -275,7 +280,7 @@ func TestSASLTimeoutAbortsAndEndsNegotiation(t *testing.T) {
 	defer server.Close()
 	c := &Client{conn: conn, Events: make(chan Event, 4), Raw: make(chan Line, 16), out: make(chan outgoing, 16), pong: make(chan outgoing, 1), done: make(chan struct{})}
 	defer c.Close()
-	c.sasl = c.newNegotiation(SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"})
+	c.startNegotiation(SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"}, saslTimeout)
 	c.sasl.step = stepMechanism
 	c.saslTimedOut()
 	if e := <-c.Events; e.Notice != "SASL authentication timed out. Continuing without authentication." {
@@ -296,9 +301,28 @@ func TestSASLTimeoutAbortsAndEndsNegotiation(t *testing.T) {
 	}
 }
 
+// TestSASLTimerFiresAfterSetup lets the real timer fire at once, so the race
+// detector checks that its callback is ordered after negotiation is attached.
+func TestSASLTimerFiresAfterSetup(t *testing.T) {
+	c := &Client{Events: make(chan Event, 1), out: make(chan outgoing, 4), done: make(chan struct{})}
+	defer close(c.done)
+	c.startNegotiation(SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"}, time.Nanosecond)
+	select {
+	case e := <-c.Events:
+		if e.Notice != "SASL authentication timed out. Continuing without authentication." {
+			t.Fatalf("notice = %q", e.Notice)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("timer did not fire")
+	}
+	if got := (<-c.out).line; got != "CAP END" {
+		t.Fatalf("sent %q, want CAP END", got)
+	}
+}
+
 func TestSASLTimeoutAfterConnectionEndsIsSilent(t *testing.T) {
 	c := &Client{Events: make(chan Event), out: make(chan outgoing, 4), done: make(chan struct{})}
-	c.sasl = c.newNegotiation(SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"})
+	c.startNegotiation(SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"}, saslTimeout)
 	c.sasl.stop()
 	// Events is unbuffered and unread: an emit here would block the test.
 	c.saslTimedOut()
@@ -453,7 +477,7 @@ func TestSASLQueueFailureEndsNegotiation(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			c := &Client{out: make(chan outgoing, 1), done: make(chan struct{})}
-			c.sasl = c.newNegotiation(SASL{User: "account", Pass: "secret"})
+			c.startNegotiation(SASL{User: "account", Pass: "secret"}, saslTimeout)
 			defer c.sasl.stop()
 			c.sasl.step = tc.step
 			c.out <- outgoing{line: "PRIVMSG #gloom :queued"}
@@ -540,7 +564,7 @@ func TestSASLQueueFailureDisconnects(t *testing.T) {
 	defer peer.Close()
 	c := &Client{conn: conn, Events: make(chan Event, 4), Raw: make(chan Line, 4), out: make(chan outgoing, 1), done: make(chan struct{})}
 	defer c.Close()
-	c.sasl = c.newNegotiation(SASL{User: "account", Pass: "secret"})
+	c.startNegotiation(SASL{User: "account", Pass: "secret"}, saslTimeout)
 	c.out <- outgoing{line: "PRIVMSG #gloom :queued"}
 	stopped := make(chan struct{})
 	go func() {

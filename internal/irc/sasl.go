@@ -129,14 +129,17 @@ const (
 	continueWithout = " Continuing without authentication."
 )
 
-// newNegotiation prepares negotiation for c. It must be set before the read
-// loop starts. Registration waits on the server until CAP END.
-func (c *Client) newNegotiation(creds SASL) *negotiation {
+// startNegotiation attaches negotiation to c and arms its timeout. It must
+// run before the read loop starts. Registration waits on the server until
+// CAP END.
+func (c *Client) startNegotiation(creds SASL, timeout time.Duration) {
 	n := &negotiation{creds: creds}
+	// The timer's callback reads c.sasl, so it is set before the timer is
+	// armed. The lock orders the timer field before the callback reads it.
+	c.sasl = n
 	n.mu.Lock()
 	defer n.mu.Unlock()
-	n.timer = time.AfterFunc(saslTimeout, c.saslTimedOut)
-	return n
+	n.timer = time.AfterFunc(timeout, c.saslTimedOut)
 }
 
 // end stops negotiation and forgets the credentials. The caller holds the lock.
@@ -291,8 +294,13 @@ func (c *Client) saslCap(sub string, params []string) string {
 		n.step = stepRequested
 		c.queueSASL(outgoing{line: "CAP REQ :sasl"})
 	case "ACK":
-		if n.step != stepRequested || !capListed(params[len(params)-1], "sasl") {
+		if n.step != stepRequested {
 			return ""
+		}
+		// gloom requests only sasl, so an ACK without it leaves nothing to
+		// wait for.
+		if !capListed(params[len(params)-1], "sasl") {
+			return c.finishSASL("The server did not acknowledge the SASL capability." + continueWithout)
 		}
 		n.step = stepMechanism
 		c.queueSASL(outgoing{line: "AUTHENTICATE " + mechanismPlain})
