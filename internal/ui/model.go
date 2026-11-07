@@ -203,6 +203,8 @@ func (m *Model) Init() tea.Cmd {
 	}
 	if m.Start != nil && m.nick != "" {
 		cmds = append(cmds, m.connect(*m.Start))
+		// connect has its own copy, so the start config drops the password.
+		m.Start.SASL = irc.SASL{}
 	}
 	return tea.Batch(cmds...)
 }
@@ -451,6 +453,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.client = v.client
 		m.network = v.config.Host
 		m.conf = v.config
+		// The client holds the credentials for negotiation. The model
+		// keeps no copy.
+		m.conf.SASL = irc.SASL{}
 		m.registered = false
 		m.away = false
 		m.note(m.serverWindow(), "Transport connected; registering...")
@@ -484,6 +489,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.disconnect()
 			return m, nil
+		}
+		if v.event.Notice != "" {
+			m.note(m.serverWindow(), v.event.Notice)
+			return m, wait(v.client)
 		}
 		m.receive(v.event)
 		return m, wait(v.client)
