@@ -35,7 +35,7 @@ func (m *Model) command(s string) tea.Cmd {
 	}
 	switch name {
 	case "/help":
-		m.note(m.active, "/connect [-TLS] host [port] | /server | /disconnect | /join #channel | /part [#channel] [reason] | /nick name | /query nick | /msg nick text | /theme [dark|light] | /config realname \"value\" | /close | /quit [reason] (leave the server) | /exit [reason] (leave gloom)")
+		m.note(m.active, "/connect [-TLS] host [port] | /server | /disconnect | /join #channel | /part [#channel] [reason] | /nick name | /query nick | /msg nick text | /theme [dark|light] | /config realname \"value\" | /close [-c | -m] (-c all channels, -m all messages) |/quit [reason] (leave the server) | /exit [reason] (leave gloom)")
 		m.note(m.active, "/whois nick | /whowas nick [count [server]] | /names [#channel] | /list [#channel] | /who [mask] | /notice target text | /topic [#channel] [text] | /kick [#channel] nick [reason] | /leave (alias /part) | /privmsg (alias /msg)")
 		m.note(m.active, "/clear | /mode [target] [modes [args]] | /invite nick [#channel] | /motd [server] | /away [message] (no message clears away)")
 		m.note(m.active, "/splash | PgUp/PgDn or wheel scroll | drag to copy | Tab complete | Up/Down history | Ctrl+C quit")
@@ -131,15 +131,77 @@ func (m *Model) command(s string) tea.Cmd {
 			m.light = !m.light
 		}
 	case "/close":
-		if m.active <= 0 {
-			return nil
-		}
-		if w := m.current(); w.joined {
-			m.send("PART " + w.name)
-		}
-		m.closeWindow(m.active)
+		return m.closeCommand(rest)
 	default:
 		m.unknownCommand(cmd)
+	}
+	return nil
+}
+
+// closeCommand handles /close. Alone it closes the current window, and in the
+// server window it also leaves the server. -c closes every channel window and
+// -m every private message window. The gloom window always stays open.
+func (m *Model) closeCommand(rest string) tea.Cmd {
+	switch rest {
+	case "-c":
+		m.closeWhere(func(w *window) bool { return isChannel(w.name) })
+		return nil
+	case "-m":
+		m.closeWhere(func(w *window) bool { return !isChannel(w.name) })
+		return nil
+	case "":
+	default:
+		m.note(m.active, "usage: /close [-c | -m]")
+		return nil
+	}
+	if m.active == 0 {
+		m.note(m.active, "The gloom window cannot be closed.")
+		return nil
+	}
+	if m.current().server {
+		return m.closeServer()
+	}
+	m.closeChat(m.active)
+	return nil
+}
+
+// closeWhere closes every channel or private message window that keep
+// selects. The gloom, server and debug windows are never passed to keep.
+func (m *Model) closeWhere(keep func(*window) bool) {
+	for i := len(m.windows) - 1; i > 0; i-- {
+		w := m.windows[i]
+		if w.server || w.raw || !keep(w) {
+			continue
+		}
+		m.closeChat(i)
+	}
+}
+
+// closeChat closes window i, leaving its channel first when joined.
+func (m *Model) closeChat(i int) {
+	if w := m.windows[i]; w.joined {
+		m.send("PART " + w.name)
+	}
+	m.closeWindow(i)
+}
+
+// closeServer leaves the server and closes its window with every channel and
+// private message window, landing on the gloom window. The debug window stays.
+func (m *Model) closeServer() tea.Cmd {
+	for i := len(m.windows) - 1; i > 0; i-- {
+		if m.windows[i].raw {
+			continue
+		}
+		m.closeWindow(i)
+	}
+	m.srv = nil
+	m.selectWindow(0)
+	if m.client != nil {
+		return m.quit("")
+	}
+	if m.connecting {
+		m.disconnect()
+		m.note(0, "Connection cancelled.")
 	}
 	return nil
 }
