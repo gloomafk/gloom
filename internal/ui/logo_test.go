@@ -28,6 +28,13 @@ func TestDetectGraphics(t *testing.T) {
 	}{
 		{"ghostty", env("TERM_PROGRAM", "ghostty"), gfxKitty},
 		{"kitty", env("TERM", "xterm-kitty"), gfxKitty},
+		{"rex", env("TERM_PROGRAM", "rex", "TERM", "xterm-256color"), gfxKitty},
+		{"rex term fallback", env("TERM", "xterm-rex"), gfxKitty},
+		{"tmux inside rex", env("TERM_PROGRAM", "rex", "TMUX", "/tmp/x"), gfxNone},
+		{"screen inside rex", env("TERM_PROGRAM", "rex", "STY", "x"), gfxNone},
+		{"rex override off", env("TERM_PROGRAM", "rex", "GLOOM_GRAPHICS", "off"), gfxNone},
+		{"rex override iterm2", env("TERM_PROGRAM", "rex", "GLOOM_GRAPHICS", "iterm2"), gfxITerm2},
+		{"unrelated terminal", env("TERM_PROGRAM", "rex-other", "TERM", "xterm-rex-other"), gfxNone},
 		{"iterm", env("TERM_PROGRAM", "iTerm.app"), gfxITerm2},
 		{"tmux inside ghostty", env("TERM_PROGRAM", "ghostty", "TMUX", "/tmp/x"), gfxNone},
 		{"plain xterm", env("TERM", "xterm-256color"), gfxNone},

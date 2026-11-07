@@ -24,3 +24,10 @@ jobs:
         run: make check
       - name: Build
         run: go build ./cmd/gloom
+      - name: Build Docker Image
+        run: make docker-build
+      - name: Check Docker Entrypoint
+        run: >-
+          docker run --rm --read-only --cap-drop=ALL
+          --security-opt=no-new-privileges:true --network=none
+          gloom:local -version
