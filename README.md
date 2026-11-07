@@ -47,21 +47,6 @@ gloom -server HOST [-port PORT] [-tls] [-nick NICK]
       [-sasl-user ACCOUNT -sasl-pass PASSWORD [-sasl-mech PLAIN]]
 ```
 
-To log in to an account during registration, give SASL credentials. They
-need TLS, and PLAIN is the only mechanism. From inside gloom:
-
-```text
-/connect -tls -sasl-user ACCOUNT -sasl-pass PASSWORD irc.gloom.im 6697
-```
-
-Gloom never writes the credentials to disk, and the debug window hides them.
-`/connect` and `/server` run locally even in the debug window and are excluded
-from input history.
-If the server rejects them, gloom reports why in the server window and
-registers without an account, unless the server requires one. A password on
-the command line can be visible to other users of the machine in the process
-list, so prefer `/connect` on a shared system.
-
 ## License
 
 Licensed under the [MIT License](https://opensource.org/licenses/MIT). See [LICENSE](./LICENSE) for details.
