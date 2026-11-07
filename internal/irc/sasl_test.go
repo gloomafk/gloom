@@ -2,15 +2,40 @@ package irc
 
 import (
 	"bufio"
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	"crypto/rand"
+	"crypto/tls"
+	"crypto/x509"
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"math/big"
 	"net"
+	"net/http/httptest"
 	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
+
+var saslTestRoots sync.Once
+
+// trustedTLSListener uses a test certificate in memory. Only this test process
+// trusts it; production Dial still uses the system trust store.
+func trustedTLSListener(t *testing.T, listener net.Listener) net.Listener {
+	t.Helper()
+	fixture := httptest.NewTLSServer(nil)
+	t.Cleanup(fixture.Close)
+	t.Setenv("GODEBUG", "x509usefallbackroots=1")
+	saslTestRoots.Do(func() {
+		roots := x509.NewCertPool()
+		roots.AddCert(fixture.Certificate())
+		x509.SetFallbackRoots(roots)
+	})
+	return tls.NewListener(listener, fixture.TLS.Clone())
+}
 
 // converse runs a scripted server on a loopback listener. A step starting
 // with "> " is a line the client must send next, and "< " a line the server
@@ -22,6 +47,10 @@ func converse(t *testing.T, steps []string) (Config, <-chan error) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = listener.Close() })
+	useTLS := len(steps) > 0 && steps[0] == "> CAP LS 302"
+	if useTLS {
+		listener = trustedTLSListener(t, listener)
+	}
 	result := make(chan error, 1)
 	go func() {
 		conn, err := listener.Accept()
@@ -50,7 +79,7 @@ func converse(t *testing.T, steps []string) (Config, <-chan error) {
 		result <- nil
 	}()
 	host, port, _ := net.SplitHostPort(listener.Addr().String())
-	return Config{Host: host, Port: port, Nick: "tester", SASL: SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"}}, result
+	return Config{Host: host, Port: port, Nick: "tester", TLS: useTLS, SASL: SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"}}, result
 }
 
 // untilWelcome collects the notices and message commands the client reports
@@ -150,6 +179,42 @@ func TestSASLEndsWithoutAuthentication(t *testing.T) {
 				"> CAP END",
 			},
 			notice: "SASL authentication failed: the server rejected the account or password. Continuing without authentication.",
+		},
+		{
+			name: "numeric 905",
+			steps: []string{
+				"< :irc.gloom.im CAP * LS :sasl",
+				"> CAP REQ :sasl",
+				"< :irc.gloom.im CAP tester ACK :sasl",
+				"> AUTHENTICATE PLAIN",
+				"< :irc.gloom.im 905 tester :Result",
+				"> CAP END",
+			},
+			notice: "SASL authentication failed: the credentials are too long for the server. Continuing without authentication.",
+		},
+		{
+			name: "numeric 906",
+			steps: []string{
+				"< :irc.gloom.im CAP * LS :sasl",
+				"> CAP REQ :sasl",
+				"< :irc.gloom.im CAP tester ACK :sasl",
+				"> AUTHENTICATE PLAIN",
+				"< :irc.gloom.im 906 tester :Result",
+				"> CAP END",
+			},
+			notice: "SASL authentication was aborted. Continuing without authentication.",
+		},
+		{
+			name: "numeric 907",
+			steps: []string{
+				"< :irc.gloom.im CAP * LS :sasl",
+				"> CAP REQ :sasl",
+				"< :irc.gloom.im CAP tester ACK :sasl",
+				"> AUTHENTICATE PLAIN",
+				"< :irc.gloom.im 907 tester :Result",
+				"> CAP END",
+			},
+			notice: "Already authenticated with SASL.",
 		},
 		{
 			name: "nickname locked",
@@ -326,5 +391,92 @@ func TestNewSASLRejectsUnsafeCredentials(t *testing.T) {
 	s, err := NewSASL("", "account", "pass with spaces: ok")
 	if err != nil || s.Mechanism != "PLAIN" || !s.Enabled() {
 		t.Fatalf("NewSASL = %+v, %v", s, err)
+	}
+}
+
+func TestDialValidatesSASLBeforeConnecting(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		sasl SASL
+		tls  bool
+		want error
+	}{
+		{name: "plaintext", sasl: SASL{User: "account", Pass: "secret"}, want: errSASLNeedsTLS},
+		{name: "missing account", sasl: SASL{Pass: "secret"}, tls: true, want: errSASLIncomplete},
+		{name: "missing password", sasl: SASL{User: "account"}, tls: true, want: errSASLIncomplete},
+		{name: "unsupported mechanism", sasl: SASL{Mechanism: "EXTERNAL", User: "account", Pass: "secret"}, tls: true, want: errSASLMechanism},
+		{name: "NUL", sasl: SASL{User: "account", Pass: "bad\x00password"}, tls: true, want: errSASLCredential},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := Dial(t.Context(), Config{Host: "127.0.0.1", Port: "1", Nick: "tester", TLS: tc.tls, SASL: tc.sasl})
+			if !errors.Is(err, tc.want) {
+				t.Fatalf("Dial error = %v, want %v before network access", err, tc.want)
+			}
+		})
+	}
+}
+
+func TestSASLRejectsUntrustedTLSCertificate(t *testing.T) {
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	if err != nil {
+		t.Fatal(err)
+	}
+	template := &x509.Certificate{SerialNumber: big.NewInt(1), NotBefore: time.Now().Add(-time.Hour), NotAfter: time.Now().Add(time.Hour), IPAddresses: []net.IP{net.ParseIP("127.0.0.1")}}
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	if err != nil {
+		t.Fatal(err)
+	}
+	fixture := httptest.NewUnstartedServer(nil)
+	fixture.TLS = &tls.Config{Certificates: []tls.Certificate{{Certificate: [][]byte{der}, PrivateKey: key}}}
+	fixture.StartTLS()
+	defer fixture.Close()
+	host, port, err := net.SplitHostPort(fixture.Listener.Addr().String())
+	if err != nil {
+		t.Fatal(err)
+	}
+	_, err = Dial(t.Context(), Config{Host: host, Port: port, Nick: "tester", TLS: true, SASL: SASL{User: "account", Pass: "secret"}})
+	if _, ok := errors.AsType[*tls.CertificateVerificationError](err); !ok {
+		t.Fatalf("expected certificate verification failure, got %v", err)
+	}
+}
+
+func TestSASLPlainChunkedExchange(t *testing.T) {
+	for _, size := range []int{297, 298, 510} {
+		t.Run(fmt.Sprint(size), func(t *testing.T) {
+			// PLAIN includes two NUL bytes. A 300-byte message produces exactly
+			// 400 base64 bytes and requires a final AUTHENTICATE +.
+			user := strings.Repeat("u", size/2)
+			pass := strings.Repeat("p", size-len(user))
+			payload := base64.StdEncoding.EncodeToString([]byte("\x00" + user + "\x00" + pass))
+			steps := []string{
+				"< :irc.gloom.im CAP * LS :sasl=PLAIN",
+				"> CAP REQ :sasl",
+				"< :irc.gloom.im CAP * ACK :sasl",
+				"> AUTHENTICATE PLAIN",
+				"< PING :during-authentication",
+				"> PONG :during-authentication",
+				"< AUTHENTICATE +",
+			}
+			for len(payload) >= 400 {
+				steps = append(steps, "> AUTHENTICATE "+payload[:400])
+				payload = payload[400:]
+			}
+			if payload == "" {
+				payload = "+"
+			}
+			steps = append(steps, "> AUTHENTICATE "+payload,
+				"< :irc.gloom.im 903 tester :Success", "> CAP END", "< :irc.gloom.im 001 tester :Welcome")
+			conf, served := converse(t, script(steps...))
+			conf.SASL = SASL{User: user, Pass: pass}
+			c, err := Dial(t.Context(), conf)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer c.Close()
+			untilWelcome(t, c)
+			if err := <-served; err != nil {
+				t.Fatal(err)
+			}
+		})
 	}
 }

@@ -165,6 +165,11 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 	if !ValidRealname(realname) {
 		return nil, errors.New("invalid realname")
 	}
+	if c.SASL != (SASL{}) {
+		if err := c.UseSASL(c.SASL.Mechanism, c.SASL.User, c.SASL.Pass); err != nil {
+			return nil, err
+		}
+	}
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	dial := dialer.DialContext
 	if c.TLS {

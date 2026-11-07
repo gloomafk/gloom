@@ -44,10 +44,11 @@ func TestConnectReportsSASLErrors(t *testing.T) {
 
 func TestModelDropsSASLPasswordOnceConnected(t *testing.T) {
 	conf, _ := localServer(t)
-	conf.SASL = irc.SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"}
 	m := New("tester", false)
 	t.Cleanup(m.Close)
 	result := m.connect(conf)().(connected)
+	// Update also drops credentials from a result constructed by a caller.
+	result.config.SASL = irc.SASL{Mechanism: "PLAIN", User: "account", Pass: "secret"}
 	m.update(result)
 	if m.client == nil {
 		t.Fatalf("not connected: %v", result.err)
