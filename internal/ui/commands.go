@@ -41,7 +41,7 @@ func (m *Model) command(s string) tea.Cmd {
 	}
 	switch name {
 	case "/help":
-		m.note(m.active, "/connect [-TLS] [-pass password] [-sasl-user account -sasl-pass password [-sasl-mech PLAIN]] host [port] | /server | /disconnect | /join #channel | /part [#channel] [reason] | /nick name | /query nick | /msg nick text | /theme [dark|light] | /config realname \"value\" | /close [-c | -m] (-c all channels, -m all messages) |/quit [reason] (leave the server) | /exit [reason] (leave gloom)")
+		m.note(m.active, "/connect [-TLS] [-pass password] [-sasl-user account -sasl-pass password [-sasl-mech PLAIN]] host [port] | /server | /disconnect | /join #channel | /part [#channel] [reason] | /nick primary [secondary] [fallback] | /query nick | /msg nick text | /theme [dark|light] | /config realname \"value\" | /close [-c | -m] (-c all channels, -m all messages) |/quit [reason] (leave the server) | /exit [reason] (leave gloom)")
 		m.note(m.active, "/whois nick | /whowas nick [count [server]] | /names [#channel] | /list [#channel] | /who [mask] | /notice target text | /topic [#channel] [text] | /kick [#channel] nick [reason] | /leave (alias /part) | /privmsg (alias /msg)")
 		m.note(m.active, "/clear | /mode [target] [modes [args]] | /invite nick [#channel] | /motd [server] | /away [message] (no message clears away) | /quote data (send raw data to the server)")
 		m.note(m.active, "/splash | PgUp/PgDn or wheel scroll | drag to copy | Tab complete | Up/Down history | Ctrl+C quit")
@@ -114,11 +114,19 @@ func (m *Model) command(s string) tea.Cmd {
 		}
 		m.send("PART " + target + " :" + reason)
 	case "/nick":
-		if !need(1) || !irc.ValidNick(args[0]) {
-			m.note(m.active, "Invalid nickname.")
+		if len(args) < 1 || len(args) > 3 || irc.Clean(s) != s {
+			m.note(m.active, "usage: /nick primary [secondary] [fallback]")
 			return nil
 		}
-		m.changeNick(args[0])
+		var nicks [3]string
+		for i, nick := range args {
+			if !irc.ValidNick(nick) {
+				m.note(m.active, "Invalid nickname.")
+				return nil
+			}
+			nicks[i] = nick
+		}
+		m.changeNicks(nicks)
 	case "/query":
 		if !need(1) || !irc.ValidNick(args[0]) {
 			return nil
@@ -218,12 +226,15 @@ func (m *Model) closeServer() tea.Cmd {
 
 func (m *Model) unknownCommand(s string) { m.note(m.active, "Unknown command: "+s+". Type /help.") }
 
-// changeNick waits for the server echo when connected, or sets the local nick.
-func (m *Model) changeNick(nick string) {
+// changeNicks stores preferences, waiting for the server echo when connected.
+func (m *Model) changeNicks(nicks [3]string) {
+	nick := nicks[0]
 	if m.client != nil {
-		if !m.send("NICK " + nick) {
+		if err := m.client.SetNicknames(nicks); err != nil {
+			m.note(m.active, err.Error())
 			return
 		}
+		m.preferredNicks = nicks
 		m.nickWin = m.current()
 		return
 	}
@@ -233,6 +244,7 @@ func (m *Model) changeNick(nick string) {
 		m.add(m.active, "", m.nick+" is now "+nick)
 	}
 	m.nick = nick
+	m.preferredNicks = nicks
 }
 
 // quit leaves the server but keeps gloom and every window open.
