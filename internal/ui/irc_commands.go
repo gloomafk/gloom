@@ -67,6 +67,8 @@ func (m *Model) ircCommand(cmd, rest string) bool {
 		}
 		m.send(ircLine("MOTD", args...))
 	case "/away":
+		// As in irssi, a message sets or replaces the away status and a bare
+		// /away clears it. The 305 and 306 replies update the title.
 		line := "AWAY"
 		if rest != "" {
 			line += " :" + strings.TrimPrefix(rest, ":")

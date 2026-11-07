@@ -598,6 +598,9 @@ func (m *Model) topicBar(p palette, w *window, width int) string {
 		if m.registered && w == m.srv {
 			topic = m.network + " · connected as " + m.nick
 		}
+		if m.away && w == m.srv {
+			topic += " (zZzZ)"
+		}
 	}
 	// The nicklist title already shows the member count. The topic bar does not repeat it.
 	s := style(p.accent, p.panel).Bold(true).Render(" "+name) + style(p.fg, p.panel).Render("  "+topic)
