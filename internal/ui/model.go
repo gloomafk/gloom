@@ -110,6 +110,8 @@ type Model struct {
 	lag        time.Duration
 	now        time.Time
 
+	preferredNicks [3]string
+
 	// Windows.
 	windows           []*window
 	srv               *window // the server window, nil until the first connection
@@ -218,6 +220,10 @@ func (m *Model) connect(c irc.Config) tea.Cmd {
 	if m.connecting || m.client != nil || m.leaving != nil {
 		m.note(m.active, "Already connected or connecting. Use /disconnect first.")
 		return nil
+	}
+	if m.preferredNicks != ([3]string{}) {
+		c.Nicknames = m.preferredNicks
+		c.Nick = m.preferredNicks[0]
 	}
 	m.resetServerLimits()
 	ctx, cancel := context.WithCancel(context.Background())
@@ -454,6 +460,11 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.client = v.client
+		if m.preferredNicks != ([3]string{}) && m.preferredNicks != v.config.Nicknames {
+			if err := m.client.SetNicknames(m.preferredNicks); err != nil {
+				m.note(m.serverWindow(), err.Error())
+			}
+		}
 		m.network = v.config.Host
 		m.conf = v.config
 		// The client holds the credentials for negotiation. The model

@@ -39,6 +39,9 @@ var (
 // Config is where and as whom to connect.
 type Config struct {
 	Host, Port, Nick string
+	// Nicknames optionally supplies one to three ordered registration choices.
+	// Empty trailing entries are ignored; when set, the first replaces Nick.
+	Nicknames [3]string
 	// Realname is sent in the USER line. When empty, the nick is sent, so the
 	// server learns nothing about the client.
 	Realname string
@@ -72,8 +75,14 @@ type outgoing struct {
 
 // Client is one live connection. Events and Raw are closed once it has stopped.
 type Client struct {
-	conn   net.Conn
-	Events chan Event
+	// nickMu serializes nickname requests with registration replies.
+	nickMu     sync.Mutex
+	nicknames  [3]string
+	nickIndex  int
+	nick       string
+	registered bool
+	conn       net.Conn
+	Events     chan Event
 	// Raw mirrors all traffic. It is lossy: lines are dropped when nobody reads.
 	Raw chan Line
 	out chan outgoing
@@ -175,6 +184,14 @@ func ValidPassword(s string) bool {
 // Dial connects, verifying the server certificate when TLS is on, and starts
 // registration. It returns once the transport is up.
 func Dial(ctx context.Context, c Config) (*Client, error) {
+	if c.Nicknames != ([3]string{}) {
+		if !validNicknames(c.Nicknames) {
+			return nil, errors.New("invalid nickname list")
+		}
+		c.Nick = c.Nicknames[0]
+	} else {
+		c.Nicknames[0] = c.Nick
+	}
 	if !ValidNick(c.Nick) {
 		return nil, errors.New("invalid nickname")
 	}
@@ -200,12 +217,22 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 		return nil, err
 	}
 	client := &Client{conn: conn, Events: make(chan Event, 256), Raw: make(chan Line, 256), out: make(chan outgoing, 64), pong: make(chan outgoing, 8), done: make(chan struct{})}
+	client.nicknames, client.nick = c.Nicknames, c.Nick
 	if c.SASL.Enabled() {
 		// Set before the loops start, which read it. CAP LS goes first, so
 		// the server holds registration until negotiation ends.
 		client.startNegotiation(c.SASL, saslTimeout)
 		_ = client.Send("CAP LS 302")
 	}
+	// Queue registration before reading replies so retries cannot precede USER.
+	if c.Password != "" {
+		if err := client.Send("PASS :" + c.Password); err != nil {
+			client.Close()
+			return nil, err
+		}
+	}
+	_ = client.Send("NICK " + c.Nick)
+	_ = client.Send("USER " + c.Nick + " 0 * :" + realname)
 	var loops sync.WaitGroup
 	loops.Go(client.writeLoop)
 	loops.Go(client.readLoop)
@@ -216,14 +243,6 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 		close(client.Events)
 		close(client.Raw)
 	}()
-	if c.Password != "" {
-		if err := client.Send("PASS :" + c.Password); err != nil {
-			client.Close()
-			return nil, err
-		}
-	}
-	_ = client.Send("NICK " + c.Nick)
-	_ = client.Send("USER " + c.Nick + " 0 * :" + realname)
 	return client, nil
 }
 
@@ -431,6 +450,14 @@ func (c *Client) readLoop() {
 			if consumed {
 				continue
 			}
+		}
+		notice, err := c.handleNick(m)
+		if err != nil {
+			c.emit(Event{Err: err})
+			return
+		}
+		if notice != "" {
+			c.emit(Event{Notice: notice})
 		}
 		c.emit(Event{Message: m})
 	}
