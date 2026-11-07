@@ -68,6 +68,15 @@ func TestStartConfigDropsSASLPasswordAfterInit(t *testing.T) {
 	}
 }
 
+func TestFailedDialResultDropsSASLCredentials(t *testing.T) {
+	m := New("tester", false)
+	t.Cleanup(m.Close)
+	result := m.connect(irc.Config{Host: "127.0.0.1", Port: "1", Nick: "tester", SASL: irc.SASL{User: "account", Pass: "secret"}})().(connected)
+	if result.err == nil || result.config.SASL != (irc.SASL{}) {
+		t.Fatal("failed dial retained credentials or accepted plaintext SASL")
+	}
+}
+
 func TestConnectCredentialsStayOutOfHistory(t *testing.T) {
 	for _, verb := range []string{"/connect", "/SERVER", "/connect\t"} {
 		for _, debug := range []bool{false, true} {

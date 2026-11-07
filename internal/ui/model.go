@@ -230,6 +230,7 @@ func (m *Model) connect(c irc.Config) tea.Cmd {
 		dialCtx, cancelDial := context.WithTimeout(ctx, connectTimeout)
 		defer cancelDial()
 		client, err := irc.Dial(dialCtx, c)
+		c.SASL = irc.SASL{}
 		result := connected{client: client, config: c, err: err, ctx: ctx}
 		if client != nil {
 			// A command's result can be discarded when Bubble Tea stops. Until
