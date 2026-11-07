@@ -101,6 +101,7 @@ type Model struct {
 	conf       irc.Config
 	connecting bool
 	registered bool
+	away       bool // the server confirmed we are away (RPL_NOWAWAY)
 	quitting   bool
 	nick       string
 	network    string
@@ -451,6 +452,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.network = v.config.Host
 		m.conf = v.config
 		m.registered = false
+		m.away = false
 		m.note(m.serverWindow(), "Transport connected; registering...")
 		return m, tea.Batch(wait(v.client), waitRaw(v.client))
 	case quitDone:
@@ -692,6 +694,7 @@ func (m *Model) disconnect() {
 	m.network = "offline"
 	m.nickWin = nil
 	m.registered = false
+	m.away = false
 	m.ping = ""
 	m.lag = 0
 	m.pingAt = time.Time{}
