@@ -44,6 +44,7 @@ go build -o gloom ./cmd/gloom
 
 ```sh
 gloom -server HOST [-port PORT] [-tls] [-nick NICK]
+      [-sasl-user ACCOUNT -sasl-pass PASSWORD [-sasl-mech PLAIN]]
 ```
 
 ## License

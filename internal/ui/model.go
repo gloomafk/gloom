@@ -203,6 +203,8 @@ func (m *Model) Init() tea.Cmd {
 	}
 	if m.Start != nil && m.nick != "" {
 		cmds = append(cmds, m.connect(*m.Start))
+		// connect has its own copy, so the start config drops the password.
+		m.Start.SASL = irc.SASL{}
 	}
 	return tea.Batch(cmds...)
 }
@@ -228,6 +230,7 @@ func (m *Model) connect(c irc.Config) tea.Cmd {
 		dialCtx, cancelDial := context.WithTimeout(ctx, connectTimeout)
 		defer cancelDial()
 		client, err := irc.Dial(dialCtx, c)
+		c.SASL = irc.SASL{}
 		result := connected{client: client, config: c, err: err, ctx: ctx}
 		if client != nil {
 			// A command's result can be discarded when Bubble Tea stops. Until
@@ -451,6 +454,9 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.client = v.client
 		m.network = v.config.Host
 		m.conf = v.config
+		// The client holds the credentials for negotiation. The model
+		// keeps no copy.
+		m.conf.SASL = irc.SASL{}
 		m.registered = false
 		m.away = false
 		m.note(m.serverWindow(), "Transport connected; registering...")
@@ -484,6 +490,10 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.disconnect()
 			return m, nil
+		}
+		if v.event.Notice != "" {
+			m.note(m.serverWindow(), v.event.Notice)
+			return m, wait(v.client)
 		}
 		m.receive(v.event)
 		return m, wait(v.client)
@@ -588,14 +598,24 @@ func (m *Model) submit() tea.Cmd {
 	if s == "" {
 		return nil
 	}
-	m.history = append(m.history, s)
-	if len(m.history) > maxHistory {
-		m.history = slices.Delete(m.history, 0, 1)
+	// Connection options may contain credentials, including malformed input.
+	// Keep the whole command out of recall rather than retaining a password.
+	fields := strings.Fields(s)
+	verb := strings.ToLower(fields[0])
+	connection := verb == "/connect" || verb == "/server"
+	if !connection {
+		m.history = append(m.history, s)
+		if len(m.history) > maxHistory {
+			m.history = slices.Delete(m.history, 0, 1)
+		}
 	}
 	m.historyAt = len(m.history)
 	m.draft = ""
-	// Exit commands belong to the client, including in the raw traffic window.
-	verb, _, _ := strings.Cut(s, " ")
+	// Connection and exit commands also run locally in the raw traffic window.
+	if connection {
+		return m.command(strings.Join(fields, " "))
+	}
+	verb, _, _ = strings.Cut(s, " ")
 	if strings.EqualFold(verb, "/exit") || strings.EqualFold(verb, "/quit") {
 		return m.command(s)
 	}

@@ -21,6 +21,9 @@ func run() int {
 	port := flag.String("port", "", "IRC port (6667 TCP, 6697 TLS)")
 	nick := flag.String("nick", "", "nickname (needed before connecting)")
 	secure := flag.Bool("tls", false, "connect with verified TLS")
+	saslUser := flag.String("sasl-user", "", "SASL account (needs -tls and -sasl-pass)")
+	saslPass := flag.String("sasl-pass", "", "SASL password")
+	saslMech := flag.String("sasl-mech", "", "SASL mechanism (only PLAIN)")
 	light := flag.Bool("light", false, "use the light palette")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
@@ -32,6 +35,10 @@ func run() int {
 		fmt.Fprintln(os.Stderr, "gloom: invalid arguments or nickname")
 		return 2
 	}
+	if *server == "" && *saslMech+*saslUser+*saslPass != "" {
+		fmt.Fprintln(os.Stderr, "gloom: SASL options need -server")
+		return 2
+	}
 	m := ui.New(*nick, *light)
 	defer m.Close()
 	if *server != "" {
@@ -40,6 +47,9 @@ func run() int {
 			return 2
 		}
 		c, err := irc.NewConfig(*server, *port, *secure, *nick)
+		if err == nil && *saslMech+*saslUser+*saslPass != "" {
+			err = c.UseSASL(*saslMech, *saslUser, *saslPass)
+		}
 		if err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			return 2

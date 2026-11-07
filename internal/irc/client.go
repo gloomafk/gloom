@@ -43,11 +43,15 @@ type Config struct {
 	// server learns nothing about the client.
 	Realname string
 	TLS      bool
+	// SASL authenticates during registration when it holds credentials.
+	SASL SASL
 }
 
-// Event is something the connection reports: a message, or the error that ended it.
+// Event is something the connection reports: a message, a notice about
+// authentication for the status window, or the error that ended it.
 type Event struct {
 	Message *Message
+	Notice  string
 	Err     error
 }
 
@@ -58,7 +62,9 @@ type Line struct {
 }
 
 type outgoing struct {
-	line    string
+	line string
+	// hidden keeps the line out of the debug window, for credentials.
+	hidden  bool
 	written chan error
 }
 
@@ -74,6 +80,8 @@ type Client struct {
 	pong chan outgoing
 	done chan struct{}
 	once sync.Once
+	// sasl negotiates authentication, nil when no credentials were given.
+	sasl *negotiation
 }
 
 // NewConfig validates a server address. An empty port selects the default for
@@ -99,20 +107,52 @@ func NewConfig(host, port string, useTLS bool, nick string) (Config, error) {
 	return c, nil
 }
 
-// ParseAddress reads the arguments of /connect: [-TLS] host [port].
+// ConnectUsage describes the arguments of /connect.
+const ConnectUsage = "usage: /connect [-TLS] [-sasl-user account -sasl-pass password [-sasl-mech PLAIN]] host [port]"
+
+// ParseAddress reads the arguments of /connect: options, then host [port].
+// The options are -TLS and the SASL credentials -sasl-user, -sasl-pass and
+// -sasl-mech, in any order.
 func ParseAddress(args []string, nick string) (Config, error) {
-	useTLS := len(args) > 0 && strings.EqualFold(args[0], "-TLS")
-	if useTLS {
-		args = args[1:]
+	usage := errors.New(ConnectUsage)
+	useTLS := false
+	var mechanism, user, pass string
+	for len(args) > 0 && strings.HasPrefix(args[0], "-") {
+		option := strings.ToLower(args[0])
+		if option == "-tls" {
+			useTLS = true
+			args = args[1:]
+			continue
+		}
+		if len(args) < 2 {
+			return Config{Port: "6667", Nick: nick}, usage
+		}
+		switch option {
+		case "-sasl-user":
+			user = args[1]
+		case "-sasl-pass":
+			pass = args[1]
+		case "-sasl-mech":
+			mechanism = args[1]
+		default:
+			return Config{Port: "6667", Nick: nick}, usage
+		}
+		args = args[2:]
 	}
 	if len(args) < 1 || len(args) > 2 {
-		return Config{Port: "6667", Nick: nick}, errors.New("usage: /connect [-TLS] host [port]")
+		return Config{Port: "6667", Nick: nick}, usage
 	}
 	port := ""
 	if len(args) == 2 {
 		port = args[1]
 	}
-	return NewConfig(args[0], port, useTLS, nick)
+	c, err := NewConfig(args[0], port, useTLS, nick)
+	if err != nil || mechanism+user+pass == "" {
+		return c, err
+	}
+	// UseSASL changes c, so it runs before c is returned.
+	err = c.UseSASL(mechanism, user, pass)
+	return c, err
 }
 
 // Dial connects, verifying the server certificate when TLS is on, and starts
@@ -125,6 +165,11 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 	if !ValidRealname(realname) {
 		return nil, errors.New("invalid realname")
 	}
+	if c.SASL != (SASL{}) {
+		if err := c.UseSASL(c.SASL.Mechanism, c.SASL.User, c.SASL.Pass); err != nil {
+			return nil, err
+		}
+	}
 	dialer := &net.Dialer{Timeout: dialTimeout}
 	dial := dialer.DialContext
 	if c.TLS {
@@ -135,6 +180,12 @@ func Dial(ctx context.Context, c Config) (*Client, error) {
 		return nil, err
 	}
 	client := &Client{conn: conn, Events: make(chan Event, 256), Raw: make(chan Line, 256), out: make(chan outgoing, 64), pong: make(chan outgoing, 8), done: make(chan struct{})}
+	if c.SASL.Enabled() {
+		// Set before the loops start, which read it. CAP LS goes first, so
+		// the server holds registration until negotiation ends.
+		client.startNegotiation(c.SASL, saslTimeout)
+		_ = client.Send("CAP LS 302")
+	}
 	var loops sync.WaitGroup
 	loops.Go(client.writeLoop)
 	loops.Go(client.readLoop)
@@ -196,7 +247,11 @@ func (c *Client) Send(line string) error {
 func (c *Client) sendPong(token string) error { return c.enqueue(c.pong, "PONG :"+token) }
 
 func (c *Client) enqueue(q chan<- outgoing, line string) error {
-	if !ValidLine(line) {
+	return c.queue(q, outgoing{line: line})
+}
+
+func (c *Client) queue(q chan<- outgoing, message outgoing) error {
+	if !ValidLine(message.line) {
 		return errInvalidLine
 	}
 	// A closed client must win over a queue with room, which select alone would not.
@@ -206,7 +261,7 @@ func (c *Client) enqueue(q chan<- outgoing, line string) error {
 	default:
 	}
 	select {
-	case q <- outgoing{line: line}:
+	case q <- message:
 		return nil
 	case <-c.done:
 		return ErrDisconnected
@@ -280,7 +335,11 @@ func (c *Client) writeLoop() {
 		}
 		err := c.writeLine(message.line)
 		if err == nil {
-			c.tap(Line{Text: message.line, Out: true})
+			shown := message.line
+			if message.hidden {
+				shown = hiddenPayload
+			}
+			c.tap(Line{Text: shown, Out: true})
 		}
 		if message.written != nil {
 			message.written <- err
@@ -310,6 +369,10 @@ func (c *Client) writeLine(line string) error {
 }
 
 func (c *Client) readLoop() {
+	if c.sasl != nil {
+		// Runs after Close, which unblocks a timeout notice being emitted.
+		defer c.sasl.stop()
+	}
 	defer c.Close()
 	s := bufio.NewScanner(c.conn)
 	s.Buffer(make([]byte, 4096), 8192)
@@ -326,6 +389,19 @@ func (c *Client) readLoop() {
 				return
 			}
 			continue
+		}
+		if c.sasl != nil {
+			consumed, notice, err := c.handleSASL(m)
+			if err != nil {
+				c.emit(Event{Err: err})
+				return
+			}
+			if notice != "" {
+				c.emit(Event{Notice: notice})
+			}
+			if consumed {
+				continue
+			}
 		}
 		c.emit(Event{Message: m})
 	}

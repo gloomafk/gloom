@@ -287,6 +287,9 @@ func (m *Model) receive(e irc.Event) {
 		}
 		m.windows[i].suppressJoinNames = true
 		m.send("NAMES " + a[0])
+	case "900", "901":
+		// RPL_LOGGEDIN and RPL_LOGGEDOUT: the server's word on the account.
+		m.addCode(m.serverWindow(), code, "", p.Trailing())
 	case "305", "306":
 		// RPL_UNAWAY and RPL_NOWAWAY are the server's word on our away status.
 		m.away = code == "306"
