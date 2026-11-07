@@ -610,7 +610,10 @@ func (m *Model) submit() tea.Cmd {
 	}
 	m.historyAt = len(m.history)
 	m.draft = ""
-	// Exit commands belong to the client, including in the raw traffic window.
+	// Connection and exit commands also run locally in the raw traffic window.
+	if connection {
+		return m.command(strings.Join(fields, " "))
+	}
 	verb, _, _ = strings.Cut(s, " ")
 	if strings.EqualFold(verb, "/exit") || strings.EqualFold(verb, "/quit") {
 		return m.command(s)

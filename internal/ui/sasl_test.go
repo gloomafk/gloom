@@ -84,3 +84,16 @@ func TestConnectCredentialsStayOutOfHistory(t *testing.T) {
 		}
 	}
 }
+
+func TestConnectRunsLocallyInDebugWindow(t *testing.T) {
+	for _, verb := range []string{"/connect", "/SERVER", "/connect\t"} {
+		m := sized(120, 24)
+		t.Cleanup(m.Close)
+		m.toggleDebug()
+		m.input.SetValue(verb + " -sasl-user account -sasl-pass secret irc.gloom.im")
+		m.submit()
+		if len(m.current().lines) == 0 || lastText(m) != "SASL sends the password, so it needs TLS: add -tls" {
+			t.Fatal("connection command did not run locally")
+		}
+	}
+}
