@@ -1,0 +1,12 @@
+# Allow only build inputs. Keep credentials, Git metadata and local binaries out.
+**
+!go.mod
+!go.sum
+!cmd/
+!cmd/**/
+!cmd/**/*.go
+!internal/
+!internal/**/
+!internal/**/*.go
+!internal/ui/assets/*.png
+**/*_test.go

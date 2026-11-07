@@ -59,6 +59,7 @@ func detectGraphics(env func(string) string) graphics {
 	}
 	switch {
 	case env("KITTY_WINDOW_ID") != "", env("TERM") == "xterm-kitty", env("TERM") == "xterm-ghostty",
+		env("TERM") == "xterm-rex", env("TERM_PROGRAM") == "rex",
 		env("TERM_PROGRAM") == "ghostty", env("TERM_PROGRAM") == "WezTerm":
 		return gfxKitty
 	case env("TERM_PROGRAM") == "iTerm.app":
