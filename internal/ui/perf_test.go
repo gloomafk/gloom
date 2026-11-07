@@ -52,16 +52,21 @@ func TestLinesThatShowNothingKeepRows(t *testing.T) {
 		":irc.gloom.im 005 tester NETWORK=Example :are supported",
 		":irc.gloom.im PONG irc.gloom.im :token",
 		":irc.gloom.im 366 tester #gloom :End of /NAMES list.",
-		":alice!u@gloom.im TOPIC #gloom :new topic",
 	} {
 		deliver(t, m, raw)
 	}
 	if m.rowsVersion != before {
 		t.Fatal("lines that add no row must not invalidate the cached rows")
 	}
-	deliver(t, m, ":alice!u@gloom.im PRIVMSG #gloom :hello")
-	if m.rowsVersion == before {
-		t.Fatal("a new line must invalidate the cached rows")
+	for _, raw := range []string{
+		":alice!u@gloom.im PRIVMSG #gloom :hello",
+		":alice!u@gloom.im TOPIC #gloom :new topic",
+	} {
+		before = m.rowsVersion
+		deliver(t, m, raw)
+		if m.rowsVersion == before {
+			t.Fatalf("%q must invalidate the cached rows", raw)
+		}
 	}
 }
 
