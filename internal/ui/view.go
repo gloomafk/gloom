@@ -713,7 +713,7 @@ func (m *Model) View() tea.View {
 	m.listIdx = nil
 	switch {
 	case m.view == viewList:
-		rows, m.listIdx = m.listRows(p, mainW)
+		rows, m.listIdx = m.listRows(p, mainW, bodyH)
 		bottom = false
 	case m.view == viewConfig:
 		rows, bottom = m.configRows(p, mainW), false

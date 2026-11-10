@@ -302,3 +302,34 @@ func TestAltNumberKeysAreNotBound(t *testing.T) {
 		t.Errorf("config view still lists hotkeys:\n%s", text)
 	}
 }
+
+// A long LIST reply styles only the visible rows, so scrolling and filtering
+// while it loads stay correct and cheap.
+func TestLargeListRendersVisibleRowsWhileLoading(t *testing.T) {
+	m := sized(100, 30)
+	m.toggleView(viewList)
+	m.listing = true
+	for i := range 3000 {
+		m.receiveList("322", []string{"tester", fmt.Sprintf("#c%04d", i), "1", "topic"})
+	}
+	m.panelOff = 1500
+	content := ansi.Strip(m.View().Content)
+	if !strings.Contains(content, "#c1499") || strings.Contains(content, "#c0000") {
+		t.Fatalf("scrolled view shows the wrong rows:\n%s", content)
+	}
+	rows, idx := m.listRows(m.colors(), 80, 20)
+	if len(rows) != 3001 || len(idx) != 3001 || idx[3000] != 2999 {
+		t.Fatalf("got %d rows, %d indexes", len(rows), len(idx))
+	}
+	if rows[1] != "" || rows[3000] != "" || rows[1500] == "" {
+		t.Fatal("rows outside the visible window were styled, or visible ones were not")
+	}
+	m.input.SetValue("c2999")
+	if hits := m.filteredList(); len(hits) != 1 || hits[0].name != "#c2999" {
+		t.Fatalf("filter hits %v", hits)
+	}
+	m.receiveList("322", []string{"tester", "#c2999b", "1", ""})
+	if hits := m.filteredList(); len(hits) != 2 {
+		t.Fatalf("filter missed a channel added after the first search: %v", hits)
+	}
+}

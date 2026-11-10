@@ -122,7 +122,8 @@ type Model struct {
 	view              viewMode
 	listing           bool
 	list              []listEntry
-	listIdx           []int // channel list index of each visible row, -1 for none
+	listKeys          []string // folded name and topic of each list entry, filled lazily
+	listIdx           []int    // channel list index of each visible row, -1 for none
 	raw               []rawLine
 	panelOff          int
 	history           []string
@@ -739,7 +740,7 @@ func (m *Model) disconnect() {
 	m.lag = 0
 	m.pingAt = time.Time{}
 	m.listing = false
-	m.list, m.listIdx = nil, nil
+	m.list, m.listIdx, m.listKeys = nil, nil, nil
 	for _, w := range m.windows {
 		w.joined = false
 		w.namesReceiving = false
