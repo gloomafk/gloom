@@ -173,15 +173,23 @@ func (m *Model) joinChannel(name string) {
 	m.pendingJoins[irc.Fold(name)] = true
 }
 
-// The channel list is sorted when LIST finishes, not on every frame.
+// The channel list is sorted when LIST finishes, not on every frame. Each
+// entry is folded once into m.listKeys, which follows m.list by index and is
+// reset whenever entries are replaced or reordered.
 func (m *Model) filteredList() []listEntry {
 	q := irc.Fold(strings.TrimSpace(m.input.Value()))
 	if q == "" {
 		return m.list
 	}
+	if len(m.listKeys) > len(m.list) {
+		m.listKeys = nil
+	}
+	for _, e := range m.list[len(m.listKeys):] {
+		m.listKeys = append(m.listKeys, irc.Fold(e.name)+"\x00"+irc.Fold(e.topic))
+	}
 	var hits []listEntry
-	for _, e := range m.list {
-		if strings.Contains(irc.Fold(e.name), q) || strings.Contains(irc.Fold(e.topic), q) {
+	for i, e := range m.list {
+		if strings.Contains(m.listKeys[i], q) {
 			hits = append(hits, e)
 		}
 	}
@@ -200,7 +208,7 @@ func (m *Model) listSubmit(s string) {
 func (m *Model) receiveList(code string, a []string) {
 	switch code {
 	case "321":
-		m.list, m.listing = nil, true
+		m.list, m.listKeys, m.listing = nil, nil, true
 	case "322":
 		if len(a) < 3 || len(m.list) >= maxList {
 			return
@@ -212,7 +220,7 @@ func (m *Model) receiveList(code string, a []string) {
 		}
 		m.list = append(m.list, listEntry{irc.Clean(a[1]), n, irc.Clean(topic)})
 	case "323":
-		m.listing = false
+		m.listing, m.listKeys = false, nil
 		slices.SortStableFunc(m.list, func(a, b listEntry) int { return b.users - a.users })
 	}
 }
@@ -230,7 +238,11 @@ func padLeft(s string, width int) string {
 	s = ansi.Truncate(s, width, "")
 	return strings.Repeat(" ", max(0, width-ansi.StringWidth(s))) + s
 }
-func (m *Model) listRows(p palette, mainW int) ([]string, []int) {
+
+// listRows returns one row per channel plus the header, but styles only the
+// rows that are visible at m.panelOff within bodyH. The rest stay empty, so
+// styling work per redraw does not grow with the number of channels.
+func (m *Model) listRows(p palette, mainW, bodyH int) ([]string, []int) {
 	hits := m.filteredList()
 	count := fmt.Sprintf("%d channels", len(hits))
 	if q := strings.TrimSpace(m.input.Value()); q != "" {
@@ -258,7 +270,17 @@ func (m *Model) listRows(p palette, mainW int) ([]string, []int) {
 		}
 		return append(rows, fit(dim.Render(note), mainW, bg)), append(idx, -1)
 	}
-	for i, e := range hits {
+	total := len(hits) + 1
+	rows, idx = slices.Grow(rows, len(hits)), slices.Grow(idx, len(hits))
+	rows, idx = rows[:total], idx[:total]
+	for i := range hits {
+		idx[i+1] = i
+	}
+	m.panelOff = min(m.panelOff, max(0, total-bodyH))
+	first := max(0, m.panelOff-1)
+	last := min(len(hits), m.panelOff-1+bodyH)
+	for i := first; i < last; i++ {
+		e := hits[i]
 		joined := false
 		if wi := m.find(e.name); wi >= 0 {
 			joined = m.windows[wi].joined
@@ -279,7 +301,7 @@ func (m *Model) listRows(p palette, mainW int) ([]string, []int) {
 		if tag != "" {
 			row = fit(row, mainW-len(tag)-1, bg) + style(p.voice, bg).Render(tag) + style(p.fg, bg).Render(" ")
 		}
-		rows, idx = append(rows, fit(row, mainW, bg)), append(idx, i)
+		rows[i+1] = fit(row, mainW, bg)
 	}
 	return rows, idx
 }
