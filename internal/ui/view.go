@@ -249,15 +249,16 @@ func (m *Model) status() ([]string, []hit) {
 		slot, title = strings.Repeat(" ", logoCols), "GLOOM "
 	}
 	logoID, logoOK := m.placeholderID(logoKey(m.light))
+	logoFG := logoForeground(m.light)
 	for i := range head {
 		text := strings.Repeat(" ", len(title))
 		if i == statusTextRow {
 			text = title
 		}
 		if logoOK {
-			head[i] = placeholderRow(logoID, i, logoCols, p.accent) + style(p.accentFg, p.accent).Bold(true).Render(text)
+			head[i] = placeholderRow(logoID, i, logoCols, p.accent) + style(logoFG, p.accent).Bold(true).Render(text)
 		} else {
-			head[i] = style(p.accentFg, p.accent).Bold(true).Render(slot + text)
+			head[i] = style(logoFG, p.accent).Bold(true).Render(slot + text)
 		}
 	}
 	left := []cell{head}
