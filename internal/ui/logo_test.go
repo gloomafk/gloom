@@ -1,7 +1,11 @@
 package ui
 
 import (
+	"bytes"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"slices"
 	"strings"
 	"testing"
@@ -9,6 +13,144 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 )
+
+func TestSlitGhostLogo(t *testing.T) {
+	// The supplied 12e master artwork, one character per square pixel cell.
+	// Spaces include the two transparent vertical eyes and the trailing tail.
+	shape := []string{
+		"  #####   ",
+		" #######  ",
+		"######### ",
+		"## ### ## ",
+		"## ### ## ",
+		"######### ",
+		"######### ",
+		"######### ",
+		" ### #####",
+	}
+	for _, light := range []bool{false, true} {
+		t.Run(fmt.Sprintf("light=%t", light), func(t *testing.T) {
+			data := markBlackPNG
+			ink := color.NRGBA{0, 0, 0, 255}
+			if light {
+				data, ink = markBonePNG, color.NRGBA{242, 242, 239, 255}
+			}
+			source, err := png.Decode(bytes.NewReader(data))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if source.Bounds() != image.Rect(0, 0, 10, 9) {
+				t.Fatalf("source bounds = %v, want the unpadded 10 by 9 master", source.Bounds())
+			}
+			for y, row := range shape {
+				for x, cell := range row {
+					want := color.NRGBA{}
+					if cell == '#' {
+						want = ink
+					}
+					if got := color.NRGBAModel.Convert(source.At(x, y)); got != want {
+						t.Fatalf("source pixel (%d,%d) = %v, want %v", x, y, got, want)
+					}
+				}
+			}
+			img, err := png.Decode(bytes.NewReader(logoPNG(light)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if got := img.Bounds(); got != image.Rect(0, 0, 550, 720) {
+				t.Fatalf("canvas = %v, want 550 by 720", got)
+			}
+			nrgba, ok := img.(*image.NRGBA)
+			if !ok {
+				t.Fatalf("canvas decoded as %T, want *image.NRGBA", img)
+			}
+			// 24/20 rows at 240px per row gives 288px, or 32px per cell.
+			// The slot centre is (8+26/2)/7.8 columns at 110px per column.
+			box := image.Rect(136, 216, 456, 504)
+			for y := range 720 {
+				for x := range 550 {
+					want := color.NRGBA{}
+					if image.Pt(x, y).In(box) && shape[(y-box.Min.Y)/32][(x-box.Min.X)/32] == '#' {
+						want = ink
+					}
+					if got := nrgba.NRGBAAt(x, y); got != want {
+						t.Fatalf("pixel (%d,%d) = %v, want %v", x, y, got, want)
+					}
+				}
+			}
+		})
+	}
+}
+
+func TestDamagedLogoKeepsCanvasGeometry(t *testing.T) {
+	for _, data := range [][]byte{nil, []byte("not a PNG"), markBlackPNG[:len(markBlackPNG)/2]} {
+		img, err := png.Decode(bytes.NewReader(renderLogoPNG(data)))
+		if err != nil {
+			t.Fatalf("fallback is not a PNG: %v", err)
+		}
+		if img.Bounds() != image.Rect(0, 0, 550, 720) {
+			t.Fatalf("fallback has wrong geometry: %v", img.Bounds())
+		}
+		if box := opaqueBounds(img, img.Bounds().Max.Y); !box.Empty() {
+			t.Fatalf("damaged logo drew pixels: %v", box)
+		}
+	}
+}
+
+func TestLogoScalesUnpaddedExports(t *testing.T) {
+	source, err := png.Decode(bytes.NewReader(markBlackPNG))
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := logoPNG(false)
+	for _, scale := range []int{2, 32} {
+		larger := image.NewNRGBA(image.Rect(0, 0, 10*scale, 9*scale))
+		for y := range larger.Bounds().Dy() {
+			for x := range larger.Bounds().Dx() {
+				larger.Set(x, y, source.At(x/scale, y/scale))
+			}
+		}
+		var buf bytes.Buffer
+		if err := png.Encode(&buf, larger); err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(renderLogoPNG(buf.Bytes()), want) {
+			t.Fatalf("%dx export changed rendered logo", scale)
+		}
+	}
+}
+
+func TestLogoPNGAllocations(t *testing.T) {
+	// PNG encoding has a small fixed cost; sampling must not allocate per pixel.
+	allocs := testing.AllocsPerRun(5, func() { logoPNG(false) })
+	t.Logf("logoPNG allocations: %.0f", allocs)
+	if allocs > 1000 {
+		t.Fatalf("logoPNG allocates %.0f times; want fewer than 1000", allocs)
+	}
+}
+
+func TestLogoLabelMatchesMarkColour(t *testing.T) {
+	for _, tc := range []struct {
+		light bool
+		fg    string
+	}{{false, "#000000"}, {true, "#F2F2EF"}} {
+		for _, gfx := range []graphics{gfxNone, gfxKitty} {
+			m := New("tester", tc.light)
+			m.gfx = gfx
+			m.Update(tea.WindowSizeMsg{Width: 100, Height: 30})
+			m.drawLogo()
+			rows, _ := m.status()
+			label := " GLOOM "
+			if gfx == gfxKitty {
+				label = "GLOOM "
+			}
+			want := style(tc.fg, m.colors().accent).Bold(true).Render(label)
+			if !strings.Contains(rows[statusTextRow], want) {
+				t.Fatalf("light=%t gfx=%v: label does not use %s", tc.light, gfx, tc.fg)
+			}
+		}
+	}
+}
 
 func env(kv ...string) func(string) string {
 	return func(k string) string {

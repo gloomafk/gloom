@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"image"
 	"image/color"
-	"image/draw"
 	"image/png"
 	"strings"
 	"sync"
@@ -18,13 +17,15 @@ import (
 	"github.com/charmbracelet/x/ansi/iterm2"
 )
 
-// The dark accent foreground uses the black mark; the light theme uses white.
+// The gloom 12e "Slit" marks retain the supplied artwork's 10 by 9 cells
+// without export padding. The dark theme's light blue accent uses black;
+// the light theme's deep blue accent uses bone (#F2F2EF).
 //
 //go:embed assets/gloom-mark-black.png
 var markBlackPNG []byte
 
-//go:embed assets/gloom-mark-white.png
-var markWhitePNG []byte
+//go:embed assets/gloom-mark-bone.png
+var markBonePNG []byte
 
 type graphics int
 
@@ -34,8 +35,8 @@ const (
 	gfxITerm2
 )
 
-// logoScale is canvas pixels per cell pixel for the logo. The mark is scaled
-// down onto the canvas, so a small canvas keeps the PNG light.
+// logoScale is canvas pixels per cell pixel for the logo. At this resolution
+// each source cell expands to a 32px square in the 1.2-row mark.
 const logoScale = 2
 
 // detectGraphics picks an image protocol from the environment. GLOOM_GRAPHICS
@@ -120,53 +121,65 @@ func (m *Model) renderSprites() tea.Cmd {
 func logoPNG(light bool) []byte {
 	data := markBlackPNG
 	if light {
-		data = markWhitePNG
+		data = markBonePNG
 	}
+	return renderLogoPNG(data)
+}
+
+func logoForeground(light bool) string {
+	if light {
+		return "#F2F2EF"
+	}
+	return "#000000"
+}
+
+func renderLogoPNG(data []byte) []byte {
+	var buf bytes.Buffer
+	// The canvas is always a valid, nonempty NRGBA image and bytes.Buffer
+	// cannot fail writes. An encoding error is an internal invariant failure.
+	if err := png.Encode(&buf, logoCanvas(data)); err != nil {
+		panic(fmt.Errorf("encode logo canvas: %w", err))
+	}
+	return buf.Bytes()
+}
+
+func logoCanvas(data []byte) *image.NRGBA {
+	canvas := image.NewNRGBA(image.Rect(0, 0, logoCols*cellPxW*logoScale, statusRows*cellPxH*logoScale))
 	mark, err := png.Decode(bytes.NewReader(data))
 	if err != nil {
-		return data
+		// Preserve the slot and label if a bundled asset is damaged. Never
+		// upload corrupt bytes or stretch an unprepared asset across the bar.
+		return canvas
 	}
-	canvas := image.NewNRGBA(image.Rect(0, 0, logoCols*cellPxW*logoScale, statusRows*cellPxH*logoScale))
 	rowH := cellPxH * logoScale
 	b := mark.Bounds()
 	h := int(logoRows * float64(rowH))
 	w := h * b.Dx() / b.Dy()
-	small := shrink(mark, w, h)
 	// The mark keeps its own aspect inside the prototype's 26px wide slot, which
 	// starts 8px in: centre it on the slot.
 	slot := (protoLogoX + protoLogoW/2) / protoCellW * cellPxW * logoScale
 	at := image.Pt(int(slot)-w/2, statusTextRow*rowH+(rowH-h)/2)
-	draw.Draw(canvas, image.Rectangle{at, at.Add(small.Bounds().Size())}, small, image.Point{}, draw.Src)
-	var buf bytes.Buffer
-	_ = png.Encode(&buf, canvas)
-	return buf.Bytes()
-}
-
-// shrink scales src down to w by h by averaging the source pixels under each
-// destination pixel, weighting colour by alpha so edges do not darken.
-func shrink(src image.Image, w, h int) *image.NRGBA {
-	b := src.Bounds()
-	dst := image.NewNRGBA(image.Rect(0, 0, w, h))
-	for y := range h {
-		y0, y1 := b.Min.Y+y*b.Dy()/h, max(b.Min.Y+(y+1)*b.Dy()/h, b.Min.Y+y*b.Dy()/h+1)
-		for x := range w {
-			x0, x1 := b.Min.X+x*b.Dx()/w, max(b.Min.X+(x+1)*b.Dx()/w, b.Min.X+x*b.Dx()/w+1)
-			var r, g, bl, a, n uint64
-			for sy := y0; sy < y1; sy++ {
-				for sx := x0; sx < x1; sx++ {
-					// RGBA is premultiplied, so summing it already weights by alpha.
-					pr, pg, pb, pa := src.At(sx, sy).RGBA()
-					r, g, bl, a, n = r+uint64(pr), g+uint64(pg), bl+uint64(pb), a+uint64(pa), n+1
-				}
-			}
-			if a == 0 {
+	// Convert each source cell once, then fill its destination rectangle.
+	// This preserves nearest-neighbour edges without per-pixel boxing or an
+	// intermediate scaled image. Ceiling division matches sampling by floor.
+	for y := range b.Dy() {
+		y0, y1 := (y*h+b.Dy()-1)/b.Dy(), ((y+1)*h+b.Dy()-1)/b.Dy()
+		for x := range b.Dx() {
+			ink := color.NRGBAModel.Convert(mark.At(b.Min.X+x, b.Min.Y+y)).(color.NRGBA)
+			if ink.A == 0 {
 				continue
 			}
-			dst.SetNRGBA(x, y, color.NRGBA{uint8(r * 255 / a), uint8(g * 255 / a), uint8(bl * 255 / a), uint8(a / n >> 8)})
+			x0, x1 := (x*w+b.Dx()-1)/b.Dx(), ((x+1)*w+b.Dx()-1)/b.Dx()
+			for dy := y0; dy < y1; dy++ {
+				for dx := x0; dx < x1; dx++ {
+					canvas.SetNRGBA(at.X+dx, at.Y+dy, ink)
+				}
+			}
 		}
 	}
-	return dst
+	return canvas
 }
+
 func logoKey(light bool) string {
 	if light {
 		return "logo-light"
