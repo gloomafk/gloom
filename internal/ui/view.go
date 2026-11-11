@@ -362,6 +362,7 @@ type messageCacheKey struct {
 	win        *window
 	version    uint64
 	width      int
+	height     int
 	lines      int
 	colors     palette
 	nick       string
@@ -375,7 +376,7 @@ type messageCache struct {
 }
 
 func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []nickHit) {
-	key := messageCacheKey{w, m.rowsVersion, width, len(w.lines), p, m.nick, m.timestamps}
+	key := messageCacheKey{w, m.rowsVersion, width, m.height, len(w.lines), p, m.nick, m.timestamps}
 	if m.chatRows.key != key {
 		rows, hits := m.messageRows(w, p, width)
 		m.chatRows = messageCache{key, rows, hits}
@@ -459,6 +460,16 @@ func (m *Model) messageRows(w *window, p palette, mainW int) ([]string, []nickHi
 			hits = append(hits, nickHit{start: start, end: min(start+ansi.StringWidth(gutter), mainW), row: len(rows), nick: nick})
 		}
 		rows = appendWrapped(rows, ansi.Wrap(body, textW, " "), head, blank, textStyle, mainW, bg)
+		if l.ghost != nil && ((l.ghost.frozen && l.ghost.shown) || (mainW >= ghostWidth && m.pageRows()+1 >= len(rows)+21)) {
+			l.ghost.shown = true
+			g := *l.ghost
+			if !g.frozen {
+				// Reserve one row for the first response after the balanced padding.
+				g.padding = max(1, (m.pageRows()+1-len(rows)-18-1)/2)
+				l.ghost.padding = g.padding
+			}
+			rows = append(rows, g.rows(p, mainW)...)
+		}
 	}
 	return rows, hits
 }
