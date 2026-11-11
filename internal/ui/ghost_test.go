@@ -8,6 +8,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
+func TestWelcomeGhostPaintsBlankCells(t *testing.T) {
+	for _, p := range []palette{darkPalette, lightPalette} {
+		g := welcomeGhost{padding: 3}
+		for _, row := range g.rows(p, 140) {
+			if bad := unpainted(row); bad != "" {
+				t.Fatalf("ghost has cells without a background: %q", bad)
+			}
+		}
+	}
+}
+
 func TestWelcomeGhostLifecycle(t *testing.T) {
 	for _, paste := range []bool{false, true} {
 		m := New("tester", false)

@@ -66,7 +66,12 @@ func run() int {
 		c.Password = *password
 		m.Start = &c
 	}
-	_, err := tea.NewProgram(m).Run()
+	output := &startupOutput{File: os.Stdout, Writer: os.Stdout}
+	program := tea.NewProgram(m, tea.WithOutput(output))
+	output.ready = func() {
+		program.Send(tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: ansi.ModeSet})
+	}
+	_, err := program.Run()
 	// gloom asked for the arrow pointer while running. Give the shell back the
 	// terminal's usual pointer over text.
 	fmt.Fprint(os.Stdout, ansi.SetPointerShape("text"))

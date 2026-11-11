@@ -155,7 +155,11 @@ type Model struct {
 	nickList          nickCache
 	debugRows         rawCache
 
-	ghost welcomeGhost
+	ghost        welcomeGhost
+	starting     bool
+	sizeKnown    bool
+	screenReady  bool
+	imagesQueued bool
 
 	// Status bar images.
 	gfx         graphics
@@ -204,6 +208,7 @@ func waitRaw(c *irc.Client) tea.Cmd {
 
 // Init starts cursor blinking, the clock, image encoding, and any requested connection.
 func (m *Model) Init() tea.Cmd {
+	m.starting = true
 	cmds := []tea.Cmd{textinput.Blink, clockCmd(), arrowPointer(), ghostCmd()}
 	if m.gfx != gfxNone {
 		cmds = append(cmds, m.renderSprites())
@@ -417,6 +422,15 @@ const notConnected = "Not connected."
 // Update handles one message and returns the model with the next command.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case tea.ModeReportMsg:
+		if v.Mode == ansi.ModeAltScreenSaveCursor && v.Value.IsSet() {
+			m.screenReady = true
+		}
+	case tea.RawMsg:
+		// Bubble Tea queues raw output before delivering it to Update.
+		if out, ok := v.Msg.(imageOutput); ok && out != "" {
+			m.imagesQueued = true
+		}
 	case tea.KeyPressMsg:
 		if v.Text != "" {
 			m.ghost.frozen = true
@@ -430,7 +444,11 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.input.Value() != "" {
 		m.ghost.frozen = true
 	}
-	return next, tea.Batch(cmd, m.scheduleLogo())
+	logo := m.scheduleLogo()
+	if m.starting && m.sizeKnown && (m.gfx != gfxKitty || m.imagesQueued) {
+		m.starting = false
+	}
+	return next, tea.Batch(cmd, logo)
 }
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.quitting {
@@ -441,7 +459,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.ghost.frozen {
 			return m, nil
 		}
-		if m.showing(0) && m.windows[0].offset == 0 && m.fitsLayout() && !m.sel.down {
+		if !m.starting && m.showing(0) && m.windows[0].offset == 0 && m.fitsLayout() && !m.sel.down {
 			m.ghost.frame++
 			m.rowsVersion++
 		}
@@ -463,6 +481,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.drawLogo()
 	case tea.WindowSizeMsg:
+		m.sizeKnown = true
 		m.revealWindows = true
 		m.resetLogo()
 		m.nickHits = nil
