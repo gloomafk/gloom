@@ -689,6 +689,16 @@ func (m *Model) adjustPendingRows(w *window, p palette, width int) {
 // View renders the current screen. It records only the layout that mouse hit
 // testing needs and never touches the connection.
 func (m *Model) View() tea.View {
+	if m.starting {
+		// Never expose the provisional dimensions or a half-loaded Kitty bar.
+		// Keep the alternate screen active so uploads target the right screen.
+		if !m.sizeKnown || (m.gfx == gfxKitty && m.imagesWanted() && !m.imagesQueued) {
+			view := tea.NewView("")
+			view.AltScreen = true
+			return view
+		}
+		m.starting = false
+	}
 	m.nickHits = nil
 	m.nickWindow = m.active
 	p := m.colors()

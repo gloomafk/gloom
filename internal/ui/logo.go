@@ -70,6 +70,9 @@ func detectGraphics(env func(string) string) graphics {
 
 type spritesReady map[string][]byte
 
+// imageOutput identifies graphics output processed by Bubble Tea's renderer.
+type imageOutput string
+
 // logoDraw fires after a quiet period. gen discards timers from earlier resizes.
 type logoDraw struct{ gen int }
 
@@ -244,6 +247,9 @@ func (m *Model) themeReady() bool {
 
 // scheduleLogo queues image preparation or a redraw after the frame is painted.
 func (m *Model) scheduleLogo() tea.Cmd {
+	if m.starting && !m.sizeKnown {
+		return nil
+	}
 	if m.imagesWanted() && !m.themeReady() {
 		if m.pngsPending {
 			return nil
@@ -290,7 +296,7 @@ func (m *Model) drawLogo() tea.Cmd {
 	seq := m.logoSequence()
 	m.imagesUp = m.imagesWanted()
 	m.logoSent = m.logoSent || m.imagesUp
-	return tea.Raw(seq)
+	return tea.Raw(imageOutput(seq))
 }
 
 func (m *Model) spriteFor(p placement) *sprite {

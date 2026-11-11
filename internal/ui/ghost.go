@@ -98,10 +98,10 @@ func (g *welcomeGhost) rows(p palette, width int) []string {
 	plain, accent := style(p.dim, p.bg), style(p.accent, p.bg).Bold(true)
 	for y := range ghostMask {
 		var row strings.Builder
-		row.WriteString(strings.Repeat(" ", max(0, (width-ghostWidth)/2)))
+		row.WriteString(plain.Render(strings.Repeat(" ", max(0, (width-ghostWidth)/2))))
 		for x := range ghostWidth {
 			if !ghostOccupied(x, y) {
-				row.WriteByte(' ')
+				row.WriteString(plain.Render(" "))
 				continue
 			}
 			c := cells[y][x]

@@ -149,6 +149,81 @@ func TestKittyFirstDrawIsImmediateAndKeepsTheBarShape(t *testing.T) {
 	}
 }
 
+func TestStartupWaitsForSizeAndImageOutput(t *testing.T) {
+	for _, imagesFirst := range []bool{false, true} {
+		m := New("tester", false)
+		m.gfx = gfxKitty
+		m.Init()
+		assertWaiting := func() {
+			t.Helper()
+			v := m.View()
+			if v.Content != "" || !v.AltScreen {
+				t.Fatal("startup exposed an incomplete frame")
+			}
+		}
+		assertWaiting()
+		ready := m.renderSprites()()
+		if imagesFirst {
+			m.Update(ready)
+			assertWaiting()
+		}
+		_, upload := m.Update(tea.WindowSizeMsg{Width: 140, Height: 45})
+		assertWaiting()
+		if !imagesFirst {
+			_, upload = m.Update(ready)
+			assertWaiting()
+		}
+		m.Update(arrowPointer()())
+		assertWaiting()
+		// Deliver the actual upload command as the event loop does.
+		var deliverOutput func(tea.Cmd)
+		deliverOutput = func(cmd tea.Cmd) {
+			if cmd == nil {
+				return
+			}
+			msg := cmd()
+			if batch, ok := msg.(tea.BatchMsg); ok {
+				for _, child := range batch {
+					deliverOutput(child)
+				}
+				return
+			}
+			m.Update(msg)
+		}
+		deliverOutput(upload)
+		v := m.View()
+		lines := strings.Split(v.Content, "\n")
+		if len(lines) != 45 || !strings.Contains(v.Content, placeholder) {
+			t.Fatal("first frame is missing its actual height or images")
+		}
+		for _, line := range lines {
+			if ansi.StringWidth(line) != 140 {
+				t.Fatal("first frame used provisional width")
+			}
+		}
+		m.Update(tea.WindowSizeMsg{Width: 120, Height: 40})
+		if m.View().Content == "" {
+			t.Fatal("resize blanked an already visible screen")
+		}
+	}
+}
+
+func TestStartupFallbackDoesNotWaitForImages(t *testing.T) {
+	for _, gfx := range []graphics{gfxNone, gfxKitty, gfxITerm2} {
+		m := New("tester", false)
+		m.gfx = gfx
+		m.Init()
+		width, height := 140, 45
+		if gfx == gfxKitty {
+			width, height = 20, 5
+		}
+		m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+		if m.View().Content == "" {
+			t.Fatal("fallback waited for images")
+		}
+	}
+}
+
 // width of one placeholder cell must be a single column, or the bar would drift.
 func TestPlaceholderIsOneCell(t *testing.T) {
 	for _, c := range []int{0, 5} {

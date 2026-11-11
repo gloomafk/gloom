@@ -155,7 +155,10 @@ type Model struct {
 	nickList          nickCache
 	debugRows         rawCache
 
-	ghost welcomeGhost
+	ghost        welcomeGhost
+	starting     bool
+	sizeKnown    bool
+	imagesQueued bool
 
 	// Status bar images.
 	gfx         graphics
@@ -204,6 +207,7 @@ func waitRaw(c *irc.Client) tea.Cmd {
 
 // Init starts cursor blinking, the clock, image encoding, and any requested connection.
 func (m *Model) Init() tea.Cmd {
+	m.starting = true
 	cmds := []tea.Cmd{textinput.Blink, clockCmd(), arrowPointer(), ghostCmd()}
 	if m.gfx != gfxNone {
 		cmds = append(cmds, m.renderSprites())
@@ -417,6 +421,11 @@ const notConnected = "Not connected."
 // Update handles one message and returns the model with the next command.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
+	case tea.RawMsg:
+		// Bubble Tea queues raw output before delivering it to Update.
+		if _, ok := v.Msg.(imageOutput); ok {
+			m.imagesQueued = true
+		}
 	case tea.KeyPressMsg:
 		if v.Text != "" {
 			m.ghost.frozen = true
@@ -463,6 +472,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.drawLogo()
 	case tea.WindowSizeMsg:
+		m.sizeKnown = true
 		m.revealWindows = true
 		m.resetLogo()
 		m.nickHits = nil
