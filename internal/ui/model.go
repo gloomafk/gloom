@@ -31,6 +31,7 @@ type line struct {
 	nick, text, code string
 	// client distinguishes local notes from server messages.
 	client bool
+	ghost  *welcomeGhost
 }
 
 // Each window keeps independent scrollback and activity.
@@ -154,6 +155,8 @@ type Model struct {
 	nickList          nickCache
 	debugRows         rawCache
 
+	ghost welcomeGhost
+
 	// Status bar images.
 	gfx         graphics
 	sprites     map[string]*sprite
@@ -175,6 +178,7 @@ func New(nick string, light bool) *Model {
 	m := &Model{input: input, nick: nick, network: "offline", light: light, nicklist: true, timestamps: true, width: 100, height: 30, now: time.Now(), gfx: detectGraphics(os.Getenv), tmux: os.Getenv("TMUX") != "", sprites: map[string]*sprite{}, sb: true, clCols: chanlistW, nlCols: nicklistW}
 	m.ensure("gloom")
 	m.note(0, "Welcome to "+version.Name+". Type /help to get started.")
+	m.windows[0].lines[0].ghost = &m.ghost
 	return m
 }
 
@@ -200,7 +204,7 @@ func waitRaw(c *irc.Client) tea.Cmd {
 
 // Init starts cursor blinking, the clock, image encoding, and any requested connection.
 func (m *Model) Init() tea.Cmd {
-	cmds := []tea.Cmd{textinput.Blink, clockCmd(), arrowPointer()}
+	cmds := []tea.Cmd{textinput.Blink, clockCmd(), arrowPointer(), ghostCmd()}
 	if m.gfx != gfxNone {
 		cmds = append(cmds, m.renderSprites())
 	}
@@ -412,7 +416,20 @@ const notConnected = "Not connected."
 
 // Update handles one message and returns the model with the next command.
 func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
+	switch v := msg.(type) {
+	case tea.KeyPressMsg:
+		if v.Text != "" {
+			m.ghost.frozen = true
+		}
+	case tea.PasteMsg:
+		if v.Content != "" {
+			m.ghost.frozen = true
+		}
+	}
 	next, cmd := m.update(msg)
+	if m.input.Value() != "" {
+		m.ghost.frozen = true
+	}
 	return next, tea.Batch(cmd, m.scheduleLogo())
 }
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -420,6 +437,15 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	switch v := msg.(type) {
+	case ghostTick:
+		if m.ghost.frozen {
+			return m, nil
+		}
+		if m.showing(0) && m.windows[0].offset == 0 && m.fitsLayout() && !m.sel.down {
+			m.ghost.frame++
+			m.rowsVersion++
+		}
+		return m, ghostCmd()
 	case spritesReady:
 		if m.pngs == nil {
 			m.pngs = make(map[string][]byte, len(v))
