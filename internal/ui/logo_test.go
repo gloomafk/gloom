@@ -162,6 +162,7 @@ func TestStartupWaitsForSizeAndImageOutput(t *testing.T) {
 			}
 		}
 		assertWaiting()
+		// Run only image preparation; leave the recurring Init timers idle.
 		ready := m.renderSprites()()
 		if imagesFirst {
 			m.Update(ready)
@@ -174,6 +175,8 @@ func TestStartupWaitsForSizeAndImageOutput(t *testing.T) {
 			assertWaiting()
 		}
 		m.Update(arrowPointer()())
+		assertWaiting()
+		_, upload = m.Update(tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: ansi.ModeSet})
 		assertWaiting()
 		// Deliver the actual upload command as the event loop does.
 		var deliverOutput func(tea.Cmd)
@@ -221,6 +224,33 @@ func TestStartupFallbackDoesNotWaitForImages(t *testing.T) {
 		if m.View().Content == "" {
 			t.Fatal("fallback waited for images")
 		}
+	}
+}
+
+func TestStartupSmallPaneDoesNotCompleteImageStartup(t *testing.T) {
+	m := New("tester", false)
+	m.gfx = gfxKitty
+	m.Init()
+	m.Update(tea.ModeReportMsg{Mode: ansi.ModeAltScreenSaveCursor, Value: ansi.ModeSet})
+	m.Update(tea.WindowSizeMsg{Width: 20, Height: 5})
+	m.Update(m.renderSprites()())
+	if m.scheduleLogo() != nil || m.drawLogo() != nil {
+		t.Fatal("small pane scheduled graphics output")
+	}
+	m.Update(tea.Raw(imageOutput(""))())
+	if m.imagesQueued || !m.starting {
+		t.Fatal("empty output completed startup")
+	}
+	if m.View().Content == "" || !m.starting {
+		t.Fatal("small-pane view changed lifecycle state or hid warning")
+	}
+	m.Update(tea.WindowSizeMsg{Width: 140, Height: 45})
+	if m.View().Content != "" || !m.starting {
+		t.Fatal("growing pane exposed an incomplete bar")
+	}
+	m.Update(ghostTick{})
+	if m.ghost.frame != 0 {
+		t.Fatal("hidden animation advanced")
 	}
 }
 

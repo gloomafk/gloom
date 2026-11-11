@@ -247,7 +247,7 @@ func (m *Model) themeReady() bool {
 
 // scheduleLogo queues image preparation or a redraw after the frame is painted.
 func (m *Model) scheduleLogo() tea.Cmd {
-	if m.starting && !m.sizeKnown {
+	if m.starting && (!m.sizeKnown || !m.screenReady) {
 		return nil
 	}
 	if m.imagesWanted() && !m.themeReady() {
@@ -256,7 +256,7 @@ func (m *Model) scheduleLogo() tea.Cmd {
 		}
 		return m.renderSprites()
 	}
-	if m.gfx == gfxNone || m.logoPending || m.logoSig() == m.logoDrawn {
+	if !m.imagesWanted() || m.logoPending || m.logoSig() == m.logoDrawn {
 		return nil
 	}
 	// Nothing is on screen yet, so there is no repaint to wait out: draw as soon
@@ -296,6 +296,9 @@ func (m *Model) drawLogo() tea.Cmd {
 	seq := m.logoSequence()
 	m.imagesUp = m.imagesWanted()
 	m.logoSent = m.logoSent || m.imagesUp
+	if seq == "" {
+		return nil
+	}
 	return tea.Raw(imageOutput(seq))
 }
 

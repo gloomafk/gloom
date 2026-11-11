@@ -97,11 +97,11 @@ func (g *welcomeGhost) rows(p palette, width int) []string {
 	}
 	plain, accent := style(p.dim, p.bg), style(p.accent, p.bg).Bold(true)
 	for y := range ghostMask {
-		var row strings.Builder
-		row.WriteString(plain.Render(strings.Repeat(" ", max(0, (width-ghostWidth)/2))))
+		var row, run strings.Builder
+		run.WriteString(strings.Repeat(" ", max(0, (width-ghostWidth)/2)))
 		for x := range ghostWidth {
 			if !ghostOccupied(x, y) {
-				row.WriteString(plain.Render(" "))
+				run.WriteByte(' ')
 				continue
 			}
 			c := cells[y][x]
@@ -111,11 +111,14 @@ func (g *welcomeGhost) rows(p palette, width int) []string {
 				c = dense[int(ghostRandom(seed+float64(step)*7.3)*float64(len(dense)))]
 			}
 			if accents[y][x] {
+				row.WriteString(plain.Render(run.String()))
+				run.Reset()
 				row.WriteString(accent.Render(string(c)))
 			} else {
-				row.WriteString(plain.Render(string(c)))
+				run.WriteByte(c)
 			}
 		}
+		row.WriteString(plain.Render(run.String()))
 		rows = append(rows, fit(row.String(), width, p.bg))
 	}
 	for range g.padding {

@@ -149,6 +149,7 @@ func TestViewsFitTerminal(t *testing.T) {
 	for _, size := range [][2]int{{100, 30}, {70, 14}, {40, 10}, {30, 8}, {20, 5}} {
 		for name, setup := range map[string]func(m *Model){
 			"chat":     func(m *Model) {},
+			"welcome":  func(m *Model) { m.selectWindow(0) },
 			"list":     func(m *Model) { m.list = []listEntry{{"#a", 1, strings.Repeat("topic ", 40)}}; m.toggleView(viewList) },
 			"config":   func(m *Model) { m.toggleView(viewConfig) },
 			"splash":   func(m *Model) { m.view = viewSplash },
@@ -238,7 +239,7 @@ var sgr = regexp.MustCompile("\x1b\\[([0-9;:]*)m")
 func unpainted(s string) string {
 	bg, at := false, 0
 	for _, loc := range sgr.FindAllStringSubmatchIndex(s, -1) {
-		if text := strings.TrimSpace(strings.ReplaceAll(s[at:loc[0]], "\n", "")); text != "" && !bg {
+		if text := strings.ReplaceAll(s[at:loc[0]], "\n", ""); text != "" && !bg {
 			return text
 		}
 		if strings.Contains(s[loc[0]:loc[1]], "\n") {
@@ -253,7 +254,7 @@ func unpainted(s string) string {
 		}
 		at = loc[1]
 	}
-	if text := strings.TrimSpace(s[at:]); text != "" && !bg {
+	if text := strings.ReplaceAll(s[at:], "\n", ""); text != "" && !bg {
 		return text
 	}
 	return ""
@@ -262,6 +263,7 @@ func TestEveryCellHasBackground(t *testing.T) {
 	for _, size := range [][2]int{{100, 28}, {70, 14}} {
 		for name, setup := range map[string]func(m *Model){
 			"chat":     func(m *Model) {},
+			"welcome":  func(m *Model) { m.selectWindow(0) },
 			"list":     func(m *Model) { m.list = []listEntry{{"#a", 1234, "topic"}}; m.toggleView(viewList) },
 			"config":   func(m *Model) { m.toggleView(viewConfig) },
 			"splash":   func(m *Model) { m.view = viewSplash },
