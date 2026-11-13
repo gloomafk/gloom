@@ -123,7 +123,6 @@ func (m *Model) toggleDebug() {
 	m.selectWindow(i)
 }
 func (m *Model) logRaw(kind byte, text string) {
-	m.debugRows = rawCache{}
 	m.raw = append(m.raw, rawLine{time.Now(), kind, irc.Clean(text)})
 	if i := m.rawWindow(); i >= 0 && m.windows[i].offset > 0 {
 		m.windows[i].offset++
@@ -133,6 +132,7 @@ func (m *Model) logRaw(kind byte, text string) {
 		dropped := len(m.raw) - maxRaw
 		clear(m.raw[:dropped])
 		m.raw = m.raw[dropped:]
+		m.firstRaw += uint64(dropped)
 		if m.sel.win != nil && m.sel.win.raw {
 			m.sel = selection{}
 		}
@@ -426,27 +426,38 @@ func commentAt(s string) int {
 	return -1
 }
 
-// rawCache keeps debug history formatted across clock and cursor updates.
-// logRaw invalidates it even when the bounded history's length stays the same.
+// rawCache keeps the bounded debug history formatted across arrivals and ticks.
 type rawCache struct {
 	width  int
 	colors palette
-	rows   []string
+	rowCache
 }
 
 func (m *Model) rawRows(p palette, mainW int) []string {
-	if m.debugRows.width != mainW || m.debugRows.colors != p {
-		m.debugRows = rawCache{width: mainW, colors: p, rows: rawRowsFor(m.raw, p, mainW)}
+	c := &m.debugRows
+	if c.width != mainW || c.colors != p {
+		*c = rawCache{width: mainW, colors: p, first: m.firstRaw}
 	}
-	return m.debugRows.rows
+	c.trim(m.firstRaw)
+	appendRawRows(m.raw, p, mainW, &c.rowCache)
+	return c.rows
 }
 
 func rawRowsFor(lines []rawLine, p palette, mainW int) []string {
+	var c rowCache
+	appendRawRows(lines, p, mainW, &c)
+	return c.rows
+}
+
+func appendRawRows(lines []rawLine, p palette, mainW int, c *rowCache) {
+	if len(c.ends) == len(lines) {
+		return
+	}
 	prefixW := 1 + timeW + gutterWidth + 3
 	textW := max(1, mainW-prefixW)
 	blank := style(p.fg, p.bg).Render(strings.Repeat(" ", prefixW))
-	var rows []string
-	for _, l := range lines {
+	rows := c.rows
+	for _, l := range lines[len(c.ends):] {
 		glyph, color, fg := "!", p.accent, p.dim
 		switch l.kind {
 		case rawSent:
@@ -461,8 +472,9 @@ func rawRowsFor(lines []rawLine, p palette, mainW int) []string {
 			style(p.fg, p.bg).Render(strings.Repeat(" ", gutterWidth-1)) + style(color, p.bg).Bold(true).Render(glyph) +
 			style(p.faint, p.bg).Render(" ▏ ")
 		rows = appendWrapped(rows, ansi.Hardwrap(l.text, textW, true), head, blank, style(fg, p.bg), mainW, p.bg)
+		c.ends = append(c.ends, len(rows))
 	}
-	return rows
+	c.rows = rows
 }
 
 // appendWrapped adds the rows of already wrapped text: the first led by head

@@ -357,32 +357,43 @@ func eventLine(p palette, text string) (glyph, color, body string) {
 	return "←", p.voice, text
 }
 
-// Keep only the last chat's formatted rows. Clock and cursor ticks should not
-// rewrap and restyle the entire scrollback when its content has not changed.
+// Keep only the last chat's formatted history, independent of how many windows
+// are open. Appends reuse retained rows; membership and layout changes restyle.
 type messageCacheKey struct {
 	win        *window
 	version    uint64
 	width      int
 	height     int
-	lines      int
 	colors     palette
 	nick       string
 	timestamps bool
 }
 
 type messageCache struct {
-	key  messageCacheKey
-	rows []string
+	key messageCacheKey
+	rowCache
 	hits []nickHit
 }
 
 func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []nickHit) {
-	key := messageCacheKey{w, m.rowsVersion, width, m.height, len(w.lines), p, m.nick, m.timestamps}
-	if m.chatRows.key != key {
-		rows, hits := m.messageRows(w, p, width)
-		m.chatRows = messageCache{key, rows, hits}
+	key := messageCacheKey{w, w.rowsVersion, width, m.height, p, m.nick, m.timestamps}
+	c := &m.chatRows
+	if c.key != key {
+		*c = messageCache{key: key, first: w.firstLine}
 	}
-	return m.chatRows.rows, m.chatRows.hits
+	removed := c.trim(w.firstLine)
+	if removed > 0 {
+		first := 0
+		for first < len(c.hits) && c.hits[first].row < removed {
+			first++
+		}
+		c.hits = slices.Delete(c.hits, 0, first)
+		for i := range c.hits {
+			c.hits[i].row -= removed
+		}
+	}
+	m.appendMessageRows(w, p, width, c)
+	return c.rows, c.hits
 }
 
 func (m *Model) messagePrefixWidth() int {
@@ -394,12 +405,20 @@ func (m *Model) messagePrefixWidth() int {
 }
 
 func (m *Model) messageRows(w *window, p palette, mainW int) ([]string, []nickHit) {
+	var c messageCache
+	m.appendMessageRows(w, p, mainW, &c)
+	return c.rows, c.hits
+}
+
+func (m *Model) appendMessageRows(w *window, p palette, mainW int, c *messageCache) {
+	if len(c.ends) == len(w.lines) {
+		return
+	}
 	prefixW := m.messagePrefixWidth()
 	textW := max(1, mainW-prefixW-1)
 	self := irc.Fold(m.nick)
-	var rows []string
-	var hits []nickHit
-	for _, l := range w.lines {
+	rows, hits := c.rows, c.hits
+	for _, l := range w.lines[len(c.ends):] {
 		own := l.nick != "" && irc.Fold(l.nick) == self
 		hl := l.nick != "" && !own && mentions(l.text, self)
 		bg, fg := p.bg, p.fg
@@ -476,8 +495,9 @@ func (m *Model) messageRows(w *window, p palette, mainW int) ([]string, []nickHi
 			}
 			rows = append(rows, g.rows(p, mainW)...)
 		}
+		c.ends = append(c.ends, len(rows))
 	}
-	return rows, hits
+	c.rows, c.hits = rows, hits
 }
 
 var nickSeed = maphash.MakeSeed()

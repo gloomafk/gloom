@@ -210,12 +210,12 @@ func TestHiddenWelcomeStopsTicks(t *testing.T) {
 			m.width, m.height = 100, 40
 			m.View()
 			hide(m)
-			frame, version := m.ghost.frame, m.rowsVersion
+			frame, version := m.ghost.frame, m.windows[0].rowsVersion
 			_, cmd := m.Update(ghostTick{})
 			if cmd != nil {
 				t.Fatal("hidden welcome scheduled another command")
 			}
-			if m.ghost.frame != frame || m.rowsVersion != version {
+			if m.ghost.frame != frame || m.windows[0].rowsVersion != version {
 				t.Fatal("hidden welcome advanced or invalidated history")
 			}
 		})

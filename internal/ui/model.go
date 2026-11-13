@@ -38,6 +38,8 @@ type line struct {
 type window struct {
 	name, topic       string
 	lines             []line
+	firstLine         uint64            // sequence of the oldest retained line
+	rowsVersion       uint64            // changes that require restyling retained rows
 	nicks             map[string]string // folded nick to nick with its mode prefix
 	unread, offset    int
 	nickOff           int // first visible member in this channel
@@ -126,6 +128,7 @@ type Model struct {
 	listKeys          []string // folded name and topic of each list entry, filled lazily
 	listIdx           []int    // channel list index of each visible row, -1 for none
 	raw               []rawLine
+	firstRaw          uint64
 	panelOff          int
 	history           []string
 	historyAt         int
@@ -145,8 +148,7 @@ type Model struct {
 	sel               selection
 	body              bodyGeometry
 	nickHits          []nickHit
-	nickWindow        int // the window nickHits were drawn for
-	rowsVersion       uint64
+	nickWindow        int             // the window nickHits were drawn for
 	autoOpens         []time.Time     // when incoming messages last opened a window
 	serverJoins       int             // joins the server made without a /join, this connection
 	pendingJoins      map[string]bool // folded channels awaiting our JOIN echo
@@ -337,7 +339,6 @@ func (m *Model) addCode(i int, code, nick, text string) {
 }
 
 func (m *Model) addLine(i int, l line) {
-	m.rowsVersion++
 	w := m.windows[i]
 	l.at = time.Now()
 	l.nick, l.text = irc.Clean(l.nick), irc.Clean(l.text)
@@ -352,6 +353,7 @@ func (m *Model) addLine(i int, l line) {
 		dropped := len(w.lines) - maxLines
 		clear(w.lines[:dropped])
 		w.lines = w.lines[dropped:]
+		w.firstLine += uint64(dropped)
 		if m.sel.win == w {
 			m.sel = selection{}
 		}
@@ -373,6 +375,9 @@ func (m *Model) closeWindow(i int) {
 	}
 	if m.sel.win == m.windows[i] {
 		m.sel = selection{}
+	}
+	if m.chatRows.key.win == m.windows[i] {
+		m.chatRows = messageCache{}
 	}
 	m.nickHits = nil
 	if i < m.tabOff {
@@ -461,7 +466,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.ghost.frame++
-		m.rowsVersion++
+		m.windows[0].rowsVersion++
 		m.ghost.pending = true
 		return m, ghostCmd()
 	case spritesReady:
@@ -771,7 +776,6 @@ func (m *Model) scroll(rows int) {
 }
 func (m *Model) disconnect() {
 	m.pendingJoins = nil
-	m.rowsVersion++
 	m.Close()
 	m.cancel, m.connectCtx = nil, nil
 	m.connecting = false
@@ -791,5 +795,6 @@ func (m *Model) disconnect() {
 		w.namesReceiving = false
 		w.suppressJoinNames = false
 		clear(w.nicks)
+		w.rowsVersion++
 	}
 }
