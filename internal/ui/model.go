@@ -47,6 +47,8 @@ type window struct {
 	mention, joined   bool
 	namesReceiving    bool
 	suppressJoinNames bool // hide an automatic NAMES reply (join or mode refresh) until its 366
+	namesRequests     []namesRequest
+	namesDirty        bool // membership modes changed during an automatic reply
 	raw, server       bool
 }
 
@@ -153,6 +155,7 @@ type Model struct {
 	serverJoins       int             // joins the server made without a /join, this connection
 	pendingJoins      map[string]bool // folded channels awaiting our JOIN echo
 	refused           map[string]bool // folded channels whose server join was refused
+	namesBatches      []*namesBatch   // explicit global or multi-channel NAMES commands
 	chatRows          messageCache
 	nickList          nickCache
 	debugRows         rawCache
@@ -573,6 +576,7 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.note(m.serverWindow(), "Server ping timed out.")
 			m.disconnect()
 		}
+		m.expireNames()
 		return m, clockCmd()
 	case tea.MouseMotionMsg:
 		m.dragTo(v.X)
@@ -776,6 +780,7 @@ func (m *Model) scroll(rows int) {
 }
 func (m *Model) disconnect() {
 	m.pendingJoins = nil
+	m.namesBatches = nil
 	m.Close()
 	m.cancel, m.connectCtx = nil, nil
 	m.connecting = false
@@ -792,8 +797,7 @@ func (m *Model) disconnect() {
 	m.list, m.listIdx, m.listKeys = nil, nil, nil
 	for _, w := range m.windows {
 		w.joined = false
-		w.namesReceiving = false
-		w.suppressJoinNames = false
+		w.resetNames()
 		clear(w.nicks)
 		w.rowsVersion++
 	}

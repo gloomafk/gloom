@@ -128,7 +128,8 @@ func (m *Model) receive(e irc.Event) {
 		w.nicks[folded] = nick
 		if self {
 			w.joined = true
-			w.suppressJoinNames = true
+			w.resetNames()
+			w.trackNames(namesRequest{at: m.now, automatic: true})
 			m.selectWindow(i)
 		}
 		m.add(i, "", nick+" joined")
@@ -161,6 +162,7 @@ func (m *Model) receive(e irc.Event) {
 		delete(m.windows[i].nicks, gone)
 		if gone == irc.Fold(m.nick) {
 			m.windows[i].joined = false
+			m.windows[i].resetNames()
 			clear(m.windows[i].nicks)
 		}
 		text := who + " left"
@@ -228,12 +230,7 @@ func (m *Model) receive(e irc.Event) {
 		if len(a) < 2 {
 			return
 		}
-		i, ok := m.channelWindow(a[1])
-		if !ok {
-			return
-		}
-		m.windows[i].namesReceiving = false
-		m.windows[i].suppressJoinNames = false
+		m.endNames(a[1])
 	case "331":
 		if len(a) < 2 {
 			return
@@ -290,8 +287,7 @@ func (m *Model) receive(e irc.Event) {
 		if !strings.ContainsAny(a[1], membershipModes) {
 			return
 		}
-		m.windows[i].suppressJoinNames = true
-		m.send("NAMES " + a[0])
+		m.refreshNames(m.windows[i])
 	case "900", "901":
 		// RPL_LOGGEDIN and RPL_LOGGEDOUT: the server's word on the account.
 		m.addCode(m.serverWindow(), code, "", p.Trailing())

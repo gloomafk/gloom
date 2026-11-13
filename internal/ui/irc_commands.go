@@ -120,7 +120,9 @@ func (m *Model) ircCommand(cmd, rest string) bool {
 			}
 			args = []string{target}
 		}
-		m.send(ircLine(strings.ToUpper(strings.TrimPrefix(cmd, "/")), args...))
+		if m.send(ircLine(strings.ToUpper(strings.TrimPrefix(cmd, "/")), args...)) && cmd == "/names" {
+			m.trackExplicitNames(args)
+		}
 	case "/notice":
 		target, text, ok := strings.Cut(rest, " ")
 		text = strings.TrimSpace(text)
