@@ -143,12 +143,21 @@ func TestCommonCommandsOnWire(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.input, func(t *testing.T) {
 			m.command(tc.input)
+			if tc.input == "/names #gloom,#other" {
+				for _, want := range []string{"NAMES #gloom", "NAMES #other"} {
+					if got := read(); got != want {
+						t.Fatalf("got %q, want %q", got, want)
+					}
+				}
+				deliver(t, m, ":irc.gloom.im 366 tester #gloom :End of names")
+				return
+			}
 			if got := read(); got != tc.want {
 				t.Fatalf("got %q, want %q", got, tc.want)
 			}
 		})
 	}
-	for _, input := range []string{"/invite", "/invite alice bad", "/motd a b", "/mode :bad", "/away hello\r\nQUIT", "/whois", "/whois :bad", "/whowas alice -1", "/whowas alice nope", "/names #gloom,", "/list a b c", "/notice alice", "/kick", "/kick #gloom :bad", "/notice alice hello\r\nQUIT", "/topic bad\x00topic", "/me waves", "/msg alice \x01VERSION\x01", "/privmsg alice prefix\x01ACTION waves\x01", "/notice alice \x01PING probe\x01", "/quote", "/quote   ", "/quote PING a\r\nQUIT", "/quote PING a\nQUIT", "/quote PING \x00", "/quote PRIVMSG alice :\x01VERSION\x01", "/quote " + strings.Repeat("a", 600), "\x01DCC SEND file 2130706433 1234 1\x01"} {
+	for _, input := range []string{"/invite", "/invite alice bad", "/motd a b", "/mode :bad", "/away hello\r\nQUIT", "/whois", "/whois :bad", "/whowas alice -1", "/whowas alice nope", "/names ,", "/list a b c", "/notice alice", "/kick", "/kick #gloom :bad", "/notice alice hello\r\nQUIT", "/topic bad\x00topic", "/me waves", "/msg alice \x01VERSION\x01", "/privmsg alice prefix\x01ACTION waves\x01", "/notice alice \x01PING probe\x01", "/quote", "/quote   ", "/quote PING a\r\nQUIT", "/quote PING a\nQUIT", "/quote PING \x00", "/quote PRIVMSG alice :\x01VERSION\x01", "/quote " + strings.Repeat("a", 600), "\x01DCC SEND file 2130706433 1234 1\x01"} {
 		m.command(input)
 	}
 	// A valid command after rejected input confirms no rejected command reached the wire.

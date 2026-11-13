@@ -68,7 +68,7 @@ func TestJoinNamesLifecycle(t *testing.T) {
 		t.Fatal("another user's join must not suppress names output")
 	}
 	m.disconnect()
-	if one.suppressJoinNames || two.suppressJoinNames {
+	if one.suppressNames || two.suppressNames {
 		t.Fatal("disconnect must clear join names suppression")
 	}
 	deliver(t, m, ":tester!u@gloom.im JOIN #one")
@@ -78,7 +78,7 @@ func TestJoinNamesLifecycle(t *testing.T) {
 		t.Fatal("rejoining must suppress the automatic names reply again")
 	}
 	deliver(t, m, ":irc.gloom.im 366 tester #one :End of names")
-	if one.suppressJoinNames || one.namesReceiving {
+	if one.suppressNames || one.namesReceiving {
 		t.Fatal("end of names must clear names reply state")
 	}
 }
