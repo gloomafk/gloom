@@ -47,7 +47,8 @@ func TestDebugRowsFollowTrafficAndLayout(t *testing.T) {
 func TestLinesThatShowNothingKeepRows(t *testing.T) {
 	m := New("tester", false)
 	deliver(t, m, ":tester!u@gloom.im JOIN #gloom")
-	before := m.rowsVersion
+	m.View()
+	before := &m.chatRows.rows[0]
 	for _, raw := range []string{
 		":irc.gloom.im 005 tester NETWORK=Example :are supported",
 		":irc.gloom.im PONG irc.gloom.im :token",
@@ -55,17 +56,19 @@ func TestLinesThatShowNothingKeepRows(t *testing.T) {
 	} {
 		deliver(t, m, raw)
 	}
-	if m.rowsVersion != before {
+	m.View()
+	if &m.chatRows.rows[0] != before {
 		t.Fatal("lines that add no row must not invalidate the cached rows")
 	}
 	for _, raw := range []string{
 		":alice!u@gloom.im PRIVMSG #gloom :hello",
 		":alice!u@gloom.im TOPIC #gloom :new topic",
 	} {
-		before = m.rowsVersion
+		rows := slices.Clone(m.chatRows.rows)
 		deliver(t, m, raw)
-		if m.rowsVersion == before {
-			t.Fatalf("%q must invalidate the cached rows", raw)
+		m.View()
+		if slices.Equal(m.chatRows.rows, rows) {
+			t.Fatalf("%q must update the cached rows", raw)
 		}
 	}
 }
