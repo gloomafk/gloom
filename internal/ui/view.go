@@ -372,7 +372,8 @@ type messageCacheKey struct {
 type messageCache struct {
 	key messageCacheKey
 	rowCache
-	hits []nickHit
+	hits     []nickHit
+	ghostEnd int // exclusive row end of the welcome silhouette, 0 when not drawn
 }
 
 func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []nickHit) {
@@ -383,6 +384,8 @@ func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []
 	}
 	removed := c.trim(w.firstLine)
 	if removed > 0 {
+		// Trimming drops the oldest line, and the welcome is always first.
+		c.ghostEnd = 0
 		first := 0
 		for first < len(c.hits) && c.hits[first].row < removed {
 			first++
@@ -494,6 +497,7 @@ func (m *Model) appendMessageRows(w *window, p palette, mainW int, c *messageCac
 				l.ghost.padding = g.padding
 			}
 			rows = append(rows, g.rows(p, mainW)...)
+			c.ghostEnd = len(rows) - g.padding
 		}
 		c.ends = append(c.ends, len(rows))
 	}
@@ -745,14 +749,7 @@ func (m *Model) View() tea.View {
 		return v
 	}
 	bodyH := height - 2 - inputPadRows - bottomRows
-	left, side := 0, 0
-	if m.channels && width-m.clCols >= 30 {
-		left = m.clCols
-	}
-	chat := m.view == viewWindow && !w.raw
-	if chat && m.nicklist && isChannel(w.name) && width-left-m.nlCols >= 45 {
-		side = m.nlCols
-	}
+	left, side := m.paneWidths(w)
 	m.paneL, m.paneR = left, side
 	mainW := width - left - side
 	var rows []string

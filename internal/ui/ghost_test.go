@@ -1,6 +1,7 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
 	"testing/synctest"
@@ -266,6 +267,49 @@ func TestWelcomeTickPauseAndResume(t *testing.T) {
 				}
 			})
 		})
+	}
+}
+
+// drawnGhostVisible reports whether the body View last drew overlaps the
+// silhouette, found by drawing the status window again without it.
+func drawnGhostVisible(m *Model) bool {
+	w := m.windows[0]
+	plain := *w
+	plain.lines = slices.Clone(w.lines)
+	plain.lines[0].ghost = nil
+	without, _ := m.messageRows(&plain, m.colors(), m.body.w)
+	welcome, _ := m.messageRows(&window{lines: plain.lines[:1]}, m.colors(), m.body.w)
+	ghostRows := len(m.body.rows) - len(without)
+	if ghostRows <= 0 {
+		return false
+	}
+	start := len(welcome) + (ghostRows-len(ghostMask))/2
+	end := start + len(ghostMask)
+	return m.body.start < end && m.body.start+m.body.h > start
+}
+
+func TestGhostVisibleMatchesView(t *testing.T) {
+	for _, channels := range []bool{false, true} {
+		for _, timestamps := range []bool{false, true} {
+			for _, notes := range []int{0, 3, 12, 40} {
+				for width := 40; width <= 120; width += 8 {
+					for height := 24; height <= 60; height += 4 {
+						m := New("tester", false)
+						m.gfx = gfxNone
+						m.channels, m.timestamps = channels, timestamps
+						for range notes {
+							m.note(0, "a later status line that may wrap in a narrow terminal")
+						}
+						m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+						m.View()
+						if got, want := m.ghostVisible(), drawnGhostVisible(m); got != want {
+							t.Fatalf("channels=%v timestamps=%v notes=%d %dx%d: ghostVisible=%v, drawn=%v",
+								channels, timestamps, notes, width, height, got, want)
+						}
+					}
+				}
+			}
+		}
 	}
 }
 

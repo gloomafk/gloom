@@ -6,7 +6,6 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
-	"github.com/charmbracelet/x/ansi"
 )
 
 // ghostMask is the 30 by 18 cell silhouette of the homepage ghost.
@@ -72,16 +71,13 @@ func (m *Model) ghostVisible() bool {
 	if len(w.lines) == 0 || w.lines[0].ghost != &m.ghost {
 		return false
 	}
-	width := m.width
-	if m.channels && width-m.clCols >= 30 {
-		width -= m.clCols
-	}
-	textWidth := max(1, width-m.messagePrefixWidth()-1)
-	welcomeRows := strings.Count(ansi.Wrap(w.lines[0].text, textWidth, " "), "\n") + 1
-	if !m.ghostFits(width, welcomeRows) {
+	// Use the rows View draws, so the silhouette's position cannot drift.
+	left, side := m.paneWidths(w)
+	rows, _ := m.cachedMessageRows(w, m.colors(), m.width-left-side)
+	ghostEnd := m.chatRows.ghostEnd
+	if ghostEnd == 0 {
 		return false
 	}
-	rows, _ := m.cachedMessageRows(w, m.colors(), width)
 	bodyH := m.pageRows() + 1
 	// View clamps the offset to zero once every row fits, so only scrollback
 	// that View keeps pauses the animation.
@@ -89,7 +85,6 @@ func (m *Model) ghostVisible() bool {
 		return false
 	}
 	// Later status messages can push the entire silhouette above the viewport.
-	ghostEnd := welcomeRows + m.ghost.padding + len(ghostMask)
 	return len(rows)-bodyH < ghostEnd
 }
 
