@@ -1,8 +1,10 @@
 package ui
 
 import (
+	"slices"
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -176,5 +178,257 @@ func TestGhostBalancedPaddingBeforeResponse(t *testing.T) {
 		if m.body.start != 0 {
 			t.Fatal("first response pushed welcome off screen")
 		}
+	}
+}
+
+func TestHiddenWelcomeStopsTicks(t *testing.T) {
+	for name, hide := range map[string]func(*Model){
+		"other window": func(m *Model) { m.selectWindow(m.openServer("irc.gloom.im")) },
+		"list":         func(m *Model) { m.toggleView(viewList) },
+		"config":       func(m *Model) { m.toggleView(viewConfig) },
+		"splash":       func(m *Model) { m.toggleView(viewSplash) },
+		"scrollback":   scrollBack,
+		"selection":    func(m *Model) { m.sel.down = true },
+		"startup":      func(m *Model) { m.starting = true },
+		"too narrow":   func(m *Model) { m.width = ghostWidth - 1 },
+		"too short":    func(m *Model) { m.height = 20 },
+		"sidebar":      func(m *Model) { m.width, m.channels = 70, true },
+		"cleared":      func(m *Model) { m.command("/clear") },
+		"evicted": func(m *Model) {
+			for range maxLines {
+				m.note(0, "later status")
+			}
+		},
+		"below viewport": func(m *Model) {
+			for range 40 {
+				m.note(0, "later status")
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := New("tester", false)
+			m.gfx = gfxNone
+			m.width, m.height = 100, 40
+			m.View()
+			hide(m)
+			frame, version := m.ghost.frame, m.windows[0].rowsVersion
+			_, cmd := m.Update(ghostTick{})
+			if cmd != nil {
+				t.Fatal("hidden welcome scheduled another command")
+			}
+			if m.ghost.frame != frame || m.windows[0].rowsVersion != version {
+				t.Fatal("hidden welcome advanced or invalidated history")
+			}
+		})
+	}
+}
+
+func TestWelcomeTickPauseAndResume(t *testing.T) {
+	for name, hide := range map[string]func(*Model){
+		"window":    func(m *Model) { m.selectWindow(m.openServer("irc.gloom.im")) },
+		"panel":     func(m *Model) { m.toggleView(viewConfig) },
+		"size":      func(m *Model) { m.Update(tea.WindowSizeMsg{Width: 40, Height: 20}) },
+		"selection": func(m *Model) { m.sel.down = true },
+		"history":   scrollBack,
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := New("tester", false)
+				m.gfx = gfxNone
+				_, pending := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+				if pending == nil {
+					t.Fatal("visible welcome did not schedule its first tick")
+				}
+				hide(m)
+				_, cmd := m.Update(pending())
+				if cmd != nil || m.ghost.pending || m.ghost.frame != 0 {
+					t.Fatal("pending tick continued the hidden animation")
+				}
+				_, cmd = m.Update(nil)
+				if cmd != nil {
+					t.Fatal("unrelated update restarted the hidden animation")
+				}
+				m.selectWindow(0)
+				m.sel.down = false
+				m.windows[0].offset = 0
+				_, resumed := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+				if resumed == nil || !m.ghost.pending {
+					t.Fatal("returning to the welcome did not restart its timer")
+				}
+				_, cmd = m.Update(nil)
+				if cmd != nil {
+					t.Fatal("unrelated update scheduled a duplicate tick")
+				}
+				for want := 1; want <= 3; want++ {
+					_, resumed = m.Update(resumed())
+					if resumed == nil || m.ghost.frame != want {
+						t.Fatalf("resumed frame = %d, want %d with a next tick", m.ghost.frame, want)
+					}
+				}
+			})
+		})
+	}
+}
+
+// drawnGhostVisible reports whether the body View last drew overlaps the
+// silhouette, found by drawing the status window again without it.
+func drawnGhostVisible(m *Model) bool {
+	w := m.windows[0]
+	plain := *w
+	plain.lines = slices.Clone(w.lines)
+	plain.lines[0].ghost = nil
+	without, _ := m.messageRows(&plain, m.colors(), m.body.w)
+	welcome, _ := m.messageRows(&window{lines: plain.lines[:1]}, m.colors(), m.body.w)
+	ghostRows := len(m.body.rows) - len(without)
+	if ghostRows <= 0 {
+		return false
+	}
+	start := len(welcome) + (ghostRows-len(ghostMask))/2
+	end := start + len(ghostMask)
+	return m.body.start < end && m.body.start+m.body.h > start
+}
+
+func TestGhostVisibleMatchesView(t *testing.T) {
+	for _, channels := range []bool{false, true} {
+		for _, timestamps := range []bool{false, true} {
+			for _, notes := range []int{0, 3, 12, 40} {
+				for width := 40; width <= 120; width += 8 {
+					for height := 24; height <= 60; height += 4 {
+						m := New("tester", false)
+						m.gfx = gfxNone
+						m.channels, m.timestamps = channels, timestamps
+						for range notes {
+							m.note(0, "a later status line that may wrap in a narrow terminal")
+						}
+						m.Update(tea.WindowSizeMsg{Width: width, Height: height})
+						m.View()
+						if got, want := m.ghostVisible(), drawnGhostVisible(m); got != want {
+							t.Fatalf("channels=%v timestamps=%v notes=%d %dx%d: ghostVisible=%v, drawn=%v",
+								channels, timestamps, notes, width, height, got, want)
+						}
+					}
+				}
+			}
+		}
+	}
+}
+
+// scrollBack overflows the status window by a few rows and scrolls back one,
+// so View keeps the offset rather than clamping it to zero.
+func scrollBack(m *Model) {
+	for range 3 {
+		m.note(0, "later status")
+	}
+	m.windows[0].offset = 1
+}
+
+func TestScrollBackKeepsOffset(t *testing.T) {
+	m := New("tester", false)
+	m.gfx = gfxNone
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	scrollBack(m)
+	m.View()
+	if m.windows[0].offset != 1 {
+		t.Fatalf("offset = %d, want View to keep 1", m.windows[0].offset)
+	}
+}
+
+func TestWelcomeResumesWhenViewClampsScrollback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := New("tester", false)
+		m.gfx = gfxNone
+		m.note(0, "a later status line that wraps in a narrow terminal but fits on one row in a wide one")
+		_, pending := m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+		if pending == nil {
+			t.Fatal("missing initial tick")
+		}
+		m.windows[0].offset = 1
+		m.View()
+		if m.windows[0].offset != 1 {
+			t.Fatal("narrow status window did not overflow")
+		}
+		_, cmd := m.Update(pending())
+		if cmd != nil || m.ghost.pending {
+			t.Fatal("scrolled back welcome continued animating")
+		}
+		_, resumed := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+		if resumed == nil || !m.ghost.pending {
+			t.Fatal("widening until every row fits did not resume animation")
+		}
+		m.View()
+		if m.windows[0].offset != 0 {
+			t.Fatal("View kept scrollback with every row visible")
+		}
+		_, resumed = m.Update(resumed())
+		if resumed == nil || m.ghost.frame != 1 {
+			t.Fatal("resumed welcome did not advance")
+		}
+	})
+}
+
+func TestWelcomeQuickReturnKeepsOneTick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := New("tester", false)
+		m.gfx = gfxNone
+		_, pending := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+		if pending == nil {
+			t.Fatal("missing initial tick")
+		}
+		for range 5 {
+			m.toggleView(viewConfig)
+			_, cmd := m.Update(nil)
+			if cmd != nil {
+				t.Fatal("hiding welcome scheduled another tick")
+			}
+			_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+			if cmd != nil || !m.showing(0) {
+				t.Fatal("returning before the pending tick created another timer")
+			}
+		}
+		_, cmd := m.Update(pending())
+		if cmd == nil || m.ghost.frame != 1 {
+			t.Fatal("the original pending tick did not continue animation")
+		}
+	})
+}
+
+func TestFrozenWelcomeDoesNotRestart(t *testing.T) {
+	for _, msg := range []tea.Msg{
+		tea.KeyPressMsg{Code: '/', Text: "/"},
+		tea.PasteMsg{Content: "/help"},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			m := New("tester", false)
+			m.gfx = gfxNone
+			_, pending := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+			if pending == nil {
+				t.Fatal("missing initial tick")
+			}
+			m.Update(msg)
+			_, cmd := m.Update(pending())
+			if cmd != nil || m.ghost.frame != 0 || m.ghost.pending {
+				t.Fatal("typed welcome continued animating")
+			}
+			m.toggleView(viewConfig)
+			m.Update(nil)
+			_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+			if cmd != nil || !m.showing(0) {
+				t.Fatal("returning to a frozen welcome restarted animation")
+			}
+		})
+	}
+}
+
+func TestWelcomeWaitsForStartup(t *testing.T) {
+	m := New("tester", false)
+	m.gfx = gfxKitty
+	m.Init()
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	if m.ghost.pending {
+		t.Fatal("animation started before startup graphics were queued")
+	}
+	m.Update(tea.RawMsg{Msg: imageOutput("ready")})
+	if m.starting || !m.ghost.pending {
+		t.Fatal("animation did not start when the startup gate opened")
 	}
 }

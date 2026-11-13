@@ -47,10 +47,49 @@ type welcomeGhost struct {
 	frozen  bool
 	padding int
 	shown   bool
+	pending bool // one tick may still arrive after the welcome becomes hidden
 }
 
 func ghostCmd() tea.Cmd {
 	return tea.Tick(ghostInterval, func(t time.Time) tea.Msg { return ghostTick(t) })
+}
+
+func (m *Model) scheduleGhost() tea.Cmd {
+	if m.ghost.pending || !m.ghostVisible() {
+		return nil
+	}
+	m.ghost.pending = true
+	return ghostCmd()
+}
+
+func (m *Model) ghostVisible() bool {
+	if m.quitting || m.starting || m.ghost.frozen || !m.showing(0) || !m.fitsLayout() || m.sel.down {
+		return false
+	}
+	w := m.windows[0]
+	// The welcome is the first line until it is cleared or evicted.
+	if len(w.lines) == 0 || w.lines[0].ghost != &m.ghost {
+		return false
+	}
+	// Use the rows View draws, so the silhouette's position cannot drift.
+	left, side := m.paneWidths(w)
+	rows, _ := m.cachedMessageRows(w, m.colors(), m.width-left-side)
+	ghostEnd := m.chatRows.ghostEnd
+	if ghostEnd == 0 {
+		return false
+	}
+	bodyH := m.pageRows() + 1
+	// View clamps the offset to zero once every row fits, so only scrollback
+	// that View keeps pauses the animation.
+	if w.offset != 0 && len(rows) > bodyH {
+		return false
+	}
+	// Later status messages can push the entire silhouette above the viewport.
+	return len(rows)-bodyH < ghostEnd
+}
+
+func (m *Model) ghostFits(width, precedingRows int) bool {
+	return width >= ghostWidth && m.pageRows()+1 >= precedingRows+21
 }
 
 func ghostRandom(seed float64) float64 {

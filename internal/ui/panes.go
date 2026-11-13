@@ -21,6 +21,19 @@ const (
 
 func clampPane(cols int) int { return max(minPane, min(maxPane, cols)) }
 
+// paneWidths is the width of the windows pane and the nicklist beside w.
+// Each is zero when hidden or when it would leave the main area too narrow.
+func (m *Model) paneWidths(w *window) (left, side int) {
+	if m.channels && m.width-m.clCols >= 30 {
+		left = m.clCols
+	}
+	chat := m.view == viewWindow && !w.raw
+	if chat && m.nicklist && isChannel(w.name) && m.width-left-m.nlCols >= 45 {
+		side = m.nlCols
+	}
+	return left, side
+}
+
 func dragBadge(p palette, cols int) string {
 	return style(p.accentFg, p.accent).Bold(true).Render(fmt.Sprintf(" %d cols ", cols))
 }

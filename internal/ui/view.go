@@ -372,7 +372,8 @@ type messageCacheKey struct {
 type messageCache struct {
 	key messageCacheKey
 	rowCache
-	hits []nickHit
+	hits     []nickHit
+	ghostEnd int // exclusive row end of the welcome silhouette, 0 when not drawn
 }
 
 func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []nickHit) {
@@ -383,6 +384,8 @@ func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []
 	}
 	removed := c.trim(w.firstLine)
 	if removed > 0 {
+		// Trimming drops the oldest line, and the welcome is always first.
+		c.ghostEnd = 0
 		first := 0
 		for first < len(c.hits) && c.hits[first].row < removed {
 			first++
@@ -396,6 +399,14 @@ func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []
 	return c.rows, c.hits
 }
 
+func (m *Model) messagePrefixWidth() int {
+	prefixW := 1 + gutterWidth + 3
+	if m.timestamps {
+		prefixW += timeW
+	}
+	return prefixW
+}
+
 func (m *Model) messageRows(w *window, p palette, mainW int) ([]string, []nickHit) {
 	var c messageCache
 	m.appendMessageRows(w, p, mainW, &c)
@@ -406,10 +417,7 @@ func (m *Model) appendMessageRows(w *window, p palette, mainW int, c *messageCac
 	if len(c.ends) == len(w.lines) {
 		return
 	}
-	prefixW := 1 + gutterWidth + 3
-	if m.timestamps {
-		prefixW += timeW
-	}
+	prefixW := m.messagePrefixWidth()
 	textW := max(1, mainW-prefixW-1)
 	self := irc.Fold(m.nick)
 	rows, hits := c.rows, c.hits
@@ -480,7 +488,7 @@ func (m *Model) appendMessageRows(w *window, p palette, mainW int, c *messageCac
 			hits = append(hits, nickHit{start: start, end: min(start+ansi.StringWidth(gutter), mainW), row: len(rows), nick: nick})
 		}
 		rows = appendWrapped(rows, ansi.Wrap(body, textW, " "), head, blank, textStyle, mainW, bg)
-		if l.ghost != nil && ((l.ghost.frozen && l.ghost.shown) || (mainW >= ghostWidth && m.pageRows()+1 >= len(rows)+21)) {
+		if l.ghost != nil && ((l.ghost.frozen && l.ghost.shown) || m.ghostFits(mainW, len(rows))) {
 			l.ghost.shown = true
 			g := *l.ghost
 			if !g.frozen {
@@ -489,6 +497,7 @@ func (m *Model) appendMessageRows(w *window, p palette, mainW int, c *messageCac
 				l.ghost.padding = g.padding
 			}
 			rows = append(rows, g.rows(p, mainW)...)
+			c.ghostEnd = len(rows) - g.padding
 		}
 		c.ends = append(c.ends, len(rows))
 	}
@@ -740,14 +749,7 @@ func (m *Model) View() tea.View {
 		return v
 	}
 	bodyH := height - 2 - inputPadRows - bottomRows
-	left, side := 0, 0
-	if m.channels && width-m.clCols >= 30 {
-		left = m.clCols
-	}
-	chat := m.view == viewWindow && !w.raw
-	if chat && m.nicklist && isChannel(w.name) && width-left-m.nlCols >= 45 {
-		side = m.nlCols
-	}
+	left, side := m.paneWidths(w)
 	m.paneL, m.paneR = left, side
 	mainW := width - left - side
 	var rows []string
