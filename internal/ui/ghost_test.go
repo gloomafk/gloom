@@ -186,7 +186,7 @@ func TestHiddenWelcomeStopsTicks(t *testing.T) {
 		"list":         func(m *Model) { m.toggleView(viewList) },
 		"config":       func(m *Model) { m.toggleView(viewConfig) },
 		"splash":       func(m *Model) { m.toggleView(viewSplash) },
-		"scrollback":   func(m *Model) { m.windows[0].offset = 1 },
+		"scrollback":   scrollBack,
 		"selection":    func(m *Model) { m.sel.down = true },
 		"startup":      func(m *Model) { m.starting = true },
 		"too narrow":   func(m *Model) { m.width = ghostWidth - 1 },
@@ -228,7 +228,7 @@ func TestWelcomeTickPauseAndResume(t *testing.T) {
 		"panel":     func(m *Model) { m.toggleView(viewConfig) },
 		"size":      func(m *Model) { m.Update(tea.WindowSizeMsg{Width: 40, Height: 20}) },
 		"selection": func(m *Model) { m.sel.down = true },
-		"history":   func(m *Model) { m.windows[0].offset = 1 },
+		"history":   scrollBack,
 	} {
 		t.Run(name, func(t *testing.T) {
 			synctest.Test(t, func(t *testing.T) {
@@ -267,6 +267,59 @@ func TestWelcomeTickPauseAndResume(t *testing.T) {
 			})
 		})
 	}
+}
+
+// scrollBack overflows the status window by a few rows and scrolls back one,
+// so View keeps the offset rather than clamping it to zero.
+func scrollBack(m *Model) {
+	for range 3 {
+		m.note(0, "later status")
+	}
+	m.windows[0].offset = 1
+}
+
+func TestScrollBackKeepsOffset(t *testing.T) {
+	m := New("tester", false)
+	m.gfx = gfxNone
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	scrollBack(m)
+	m.View()
+	if m.windows[0].offset != 1 {
+		t.Fatalf("offset = %d, want View to keep 1", m.windows[0].offset)
+	}
+}
+
+func TestWelcomeResumesWhenViewClampsScrollback(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := New("tester", false)
+		m.gfx = gfxNone
+		m.note(0, "a later status line that wraps in a narrow terminal but fits on one row in a wide one")
+		_, pending := m.Update(tea.WindowSizeMsg{Width: 60, Height: 40})
+		if pending == nil {
+			t.Fatal("missing initial tick")
+		}
+		m.windows[0].offset = 1
+		m.View()
+		if m.windows[0].offset != 1 {
+			t.Fatal("narrow status window did not overflow")
+		}
+		_, cmd := m.Update(pending())
+		if cmd != nil || m.ghost.pending {
+			t.Fatal("scrolled back welcome continued animating")
+		}
+		_, resumed := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+		if resumed == nil || !m.ghost.pending {
+			t.Fatal("widening until every row fits did not resume animation")
+		}
+		m.View()
+		if m.windows[0].offset != 0 {
+			t.Fatal("View kept scrollback with every row visible")
+		}
+		_, resumed = m.Update(resumed())
+		if resumed == nil || m.ghost.frame != 1 {
+			t.Fatal("resumed welcome did not advance")
+		}
+	})
 }
 
 func TestWelcomeQuickReturnKeepsOneTick(t *testing.T) {

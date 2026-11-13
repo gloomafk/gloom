@@ -69,7 +69,7 @@ func (m *Model) ghostVisible() bool {
 	}
 	w := m.windows[0]
 	// The welcome is the first line until it is cleared or evicted.
-	if w.offset != 0 || len(w.lines) == 0 || w.lines[0].ghost != &m.ghost {
+	if len(w.lines) == 0 || w.lines[0].ghost != &m.ghost {
 		return false
 	}
 	width := m.width
@@ -82,9 +82,15 @@ func (m *Model) ghostVisible() bool {
 		return false
 	}
 	rows, _ := m.cachedMessageRows(w, m.colors(), width)
+	bodyH := m.pageRows() + 1
+	// View clamps the offset to zero once every row fits, so only scrollback
+	// that View keeps pauses the animation.
+	if w.offset != 0 && len(rows) > bodyH {
+		return false
+	}
 	// Later status messages can push the entire silhouette above the viewport.
 	ghostEnd := welcomeRows + m.ghost.padding + len(ghostMask)
-	return len(rows)-(m.pageRows()+1) < ghostEnd
+	return len(rows)-bodyH < ghostEnd
 }
 
 func (m *Model) ghostFits(width, precedingRows int) bool {
