@@ -385,11 +385,16 @@ func (m *Model) cachedMessageRows(w *window, p palette, width int) ([]string, []
 	return m.chatRows.rows, m.chatRows.hits
 }
 
-func (m *Model) messageRows(w *window, p palette, mainW int) ([]string, []nickHit) {
+func (m *Model) messagePrefixWidth() int {
 	prefixW := 1 + gutterWidth + 3
 	if m.timestamps {
 		prefixW += timeW
 	}
+	return prefixW
+}
+
+func (m *Model) messageRows(w *window, p palette, mainW int) ([]string, []nickHit) {
+	prefixW := m.messagePrefixWidth()
 	textW := max(1, mainW-prefixW-1)
 	self := irc.Fold(m.nick)
 	var rows []string
@@ -461,7 +466,7 @@ func (m *Model) messageRows(w *window, p palette, mainW int) ([]string, []nickHi
 			hits = append(hits, nickHit{start: start, end: min(start+ansi.StringWidth(gutter), mainW), row: len(rows), nick: nick})
 		}
 		rows = appendWrapped(rows, ansi.Wrap(body, textW, " "), head, blank, textStyle, mainW, bg)
-		if l.ghost != nil && ((l.ghost.frozen && l.ghost.shown) || (mainW >= ghostWidth && m.pageRows()+1 >= len(rows)+21)) {
+		if l.ghost != nil && ((l.ghost.frozen && l.ghost.shown) || m.ghostFits(mainW, len(rows))) {
 			l.ghost.shown = true
 			g := *l.ghost
 			if !g.frozen {

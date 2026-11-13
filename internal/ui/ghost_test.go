@@ -3,6 +3,7 @@ package ui
 import (
 	"strings"
 	"testing"
+	"testing/synctest"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
@@ -176,5 +177,161 @@ func TestGhostBalancedPaddingBeforeResponse(t *testing.T) {
 		if m.body.start != 0 {
 			t.Fatal("first response pushed welcome off screen")
 		}
+	}
+}
+
+func TestHiddenWelcomeStopsTicks(t *testing.T) {
+	for name, hide := range map[string]func(*Model){
+		"other window": func(m *Model) { m.selectWindow(m.openServer("irc.gloom.im")) },
+		"list":         func(m *Model) { m.toggleView(viewList) },
+		"config":       func(m *Model) { m.toggleView(viewConfig) },
+		"splash":       func(m *Model) { m.toggleView(viewSplash) },
+		"scrollback":   func(m *Model) { m.windows[0].offset = 1 },
+		"selection":    func(m *Model) { m.sel.down = true },
+		"startup":      func(m *Model) { m.starting = true },
+		"too narrow":   func(m *Model) { m.width = ghostWidth - 1 },
+		"too short":    func(m *Model) { m.height = 20 },
+		"sidebar":      func(m *Model) { m.width, m.channels = 70, true },
+		"cleared":      func(m *Model) { m.command("/clear") },
+		"evicted": func(m *Model) {
+			for range maxLines {
+				m.note(0, "later status")
+			}
+		},
+		"below viewport": func(m *Model) {
+			for range 40 {
+				m.note(0, "later status")
+			}
+		},
+	} {
+		t.Run(name, func(t *testing.T) {
+			m := New("tester", false)
+			m.gfx = gfxNone
+			m.width, m.height = 100, 40
+			m.View()
+			hide(m)
+			frame, version := m.ghost.frame, m.rowsVersion
+			_, cmd := m.Update(ghostTick{})
+			if cmd != nil {
+				t.Fatal("hidden welcome scheduled another command")
+			}
+			if m.ghost.frame != frame || m.rowsVersion != version {
+				t.Fatal("hidden welcome advanced or invalidated history")
+			}
+		})
+	}
+}
+
+func TestWelcomeTickPauseAndResume(t *testing.T) {
+	for name, hide := range map[string]func(*Model){
+		"window":    func(m *Model) { m.selectWindow(m.openServer("irc.gloom.im")) },
+		"panel":     func(m *Model) { m.toggleView(viewConfig) },
+		"size":      func(m *Model) { m.Update(tea.WindowSizeMsg{Width: 40, Height: 20}) },
+		"selection": func(m *Model) { m.sel.down = true },
+		"history":   func(m *Model) { m.windows[0].offset = 1 },
+	} {
+		t.Run(name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				m := New("tester", false)
+				m.gfx = gfxNone
+				_, pending := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+				if pending == nil {
+					t.Fatal("visible welcome did not schedule its first tick")
+				}
+				hide(m)
+				_, cmd := m.Update(pending())
+				if cmd != nil || m.ghost.pending || m.ghost.frame != 0 {
+					t.Fatal("pending tick continued the hidden animation")
+				}
+				_, cmd = m.Update(nil)
+				if cmd != nil {
+					t.Fatal("unrelated update restarted the hidden animation")
+				}
+				m.selectWindow(0)
+				m.sel.down = false
+				m.windows[0].offset = 0
+				_, resumed := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+				if resumed == nil || !m.ghost.pending {
+					t.Fatal("returning to the welcome did not restart its timer")
+				}
+				_, cmd = m.Update(nil)
+				if cmd != nil {
+					t.Fatal("unrelated update scheduled a duplicate tick")
+				}
+				for want := 1; want <= 3; want++ {
+					_, resumed = m.Update(resumed())
+					if resumed == nil || m.ghost.frame != want {
+						t.Fatalf("resumed frame = %d, want %d with a next tick", m.ghost.frame, want)
+					}
+				}
+			})
+		})
+	}
+}
+
+func TestWelcomeQuickReturnKeepsOneTick(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		m := New("tester", false)
+		m.gfx = gfxNone
+		_, pending := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+		if pending == nil {
+			t.Fatal("missing initial tick")
+		}
+		for range 5 {
+			m.toggleView(viewConfig)
+			_, cmd := m.Update(nil)
+			if cmd != nil {
+				t.Fatal("hiding welcome scheduled another tick")
+			}
+			_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+			if cmd != nil || !m.showing(0) {
+				t.Fatal("returning before the pending tick created another timer")
+			}
+		}
+		_, cmd := m.Update(pending())
+		if cmd == nil || m.ghost.frame != 1 {
+			t.Fatal("the original pending tick did not continue animation")
+		}
+	})
+}
+
+func TestFrozenWelcomeDoesNotRestart(t *testing.T) {
+	for _, msg := range []tea.Msg{
+		tea.KeyPressMsg{Code: '/', Text: "/"},
+		tea.PasteMsg{Content: "/help"},
+	} {
+		synctest.Test(t, func(t *testing.T) {
+			m := New("tester", false)
+			m.gfx = gfxNone
+			_, pending := m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+			if pending == nil {
+				t.Fatal("missing initial tick")
+			}
+			m.Update(msg)
+			_, cmd := m.Update(pending())
+			if cmd != nil || m.ghost.frame != 0 || m.ghost.pending {
+				t.Fatal("typed welcome continued animating")
+			}
+			m.toggleView(viewConfig)
+			m.Update(nil)
+			_, cmd = m.Update(tea.KeyPressMsg{Code: tea.KeyEscape})
+			if cmd != nil || !m.showing(0) {
+				t.Fatal("returning to a frozen welcome restarted animation")
+			}
+		})
+	}
+}
+
+func TestWelcomeWaitsForStartup(t *testing.T) {
+	m := New("tester", false)
+	m.gfx = gfxKitty
+	m.Init()
+	m.Update(tea.WindowSizeMsg{Width: 100, Height: 40})
+	if m.ghost.pending {
+		t.Fatal("animation started before startup graphics were queued")
+	}
+	m.Update(tea.RawMsg{Msg: imageOutput("ready")})
+	if m.starting || !m.ghost.pending {
+		t.Fatal("animation did not start when the startup gate opened")
 	}
 }

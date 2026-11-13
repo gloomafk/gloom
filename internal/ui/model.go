@@ -209,7 +209,7 @@ func waitRaw(c *irc.Client) tea.Cmd {
 // Init starts cursor blinking, the clock, image encoding, and any requested connection.
 func (m *Model) Init() tea.Cmd {
 	m.starting = true
-	cmds := []tea.Cmd{textinput.Blink, clockCmd(), arrowPointer(), ghostCmd()}
+	cmds := []tea.Cmd{textinput.Blink, clockCmd(), arrowPointer()}
 	if m.gfx != gfxNone {
 		cmds = append(cmds, m.renderSprites())
 	}
@@ -448,7 +448,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.starting && m.sizeKnown && (m.gfx != gfxKitty || m.imagesQueued) {
 		m.starting = false
 	}
-	return next, tea.Batch(cmd, logo)
+	return next, tea.Batch(cmd, logo, m.scheduleGhost())
 }
 func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	if m.quitting {
@@ -456,13 +456,13 @@ func (m *Model) update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	switch v := msg.(type) {
 	case ghostTick:
-		if m.ghost.frozen {
+		m.ghost.pending = false
+		if !m.ghostVisible() {
 			return m, nil
 		}
-		if !m.starting && m.showing(0) && m.windows[0].offset == 0 && m.fitsLayout() && !m.sel.down {
-			m.ghost.frame++
-			m.rowsVersion++
-		}
+		m.ghost.frame++
+		m.rowsVersion++
+		m.ghost.pending = true
 		return m, ghostCmd()
 	case spritesReady:
 		if m.pngs == nil {
