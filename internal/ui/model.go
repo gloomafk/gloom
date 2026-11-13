@@ -36,20 +36,20 @@ type line struct {
 
 // Each window keeps independent scrollback and activity.
 type window struct {
-	name, topic       string
-	lines             []line
-	firstLine         uint64            // sequence of the oldest retained line
-	rowsVersion       uint64            // changes that require restyling retained rows
-	nicks             map[string]string // folded nick to nick with its mode prefix
-	unread, offset    int
-	nickOff           int // first visible member in this channel
-	pending           int // new lines received while scrolled back, measured on render
-	mention, joined   bool
-	namesReceiving    bool
-	suppressJoinNames bool // hide an automatic NAMES reply (join or mode refresh) until its 366
-	namesRequests     []namesRequest
-	namesDirty        bool // membership modes changed during an automatic reply
-	raw, server       bool
+	name, topic     string
+	lines           []line
+	firstLine       uint64            // sequence of the oldest retained line
+	rowsVersion     uint64            // changes that require restyling retained rows
+	nicks           map[string]string // folded nick to nick with its mode prefix
+	unread, offset  int
+	nickOff         int // first visible member in this channel
+	pending         int // new lines received while scrolled back, measured on render
+	mention, joined bool
+	namesReceiving  bool
+	suppressNames   bool // hide a queued automatic NAMES reply until its 366
+	namesRequests   []namesRequest
+	namesDirty      bool // membership modes changed during an automatic reply
+	raw, server     bool
 }
 
 type connected struct {
@@ -155,7 +155,10 @@ type Model struct {
 	serverJoins       int             // joins the server made without a /join, this connection
 	pendingJoins      map[string]bool // folded channels awaiting our JOIN echo
 	refused           map[string]bool // folded channels whose server join was refused
-	namesBatches      []*namesBatch   // explicit global or multi-channel NAMES commands
+	namesBatches      []*namesBatch   // explicit global NAMES commands
+	namesSeq          uint64          // order of queued NAMES requests
+	namesFenceID      uint64          // unique PING token for each names fence
+	namesFence        *namesFence     // oldest request proven complete by a matching PONG
 	chatRows          messageCache
 	nickList          nickCache
 	debugRows         rawCache
@@ -781,6 +784,7 @@ func (m *Model) scroll(rows int) {
 func (m *Model) disconnect() {
 	m.pendingJoins = nil
 	m.namesBatches = nil
+	m.namesFence = nil
 	m.Close()
 	m.cancel, m.connectCtx = nil, nil
 	m.connecting = false

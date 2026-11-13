@@ -2,28 +2,49 @@ package ui
 
 import (
 	"fmt"
+	"strings"
 	"testing"
 	"time"
 )
 
-func namesModel(t *testing.T) (*Model, func(...string)) {
+func namesModel(t *testing.T) (*Model, func(...string) []string) {
 	t.Helper()
 	m, sent := closeModel(t)
 	for _, channel := range []string{"#one", "#two"} {
 		deliver(t, m, ":irc.gloom.im 366 tester "+channel+" :End of names")
 	}
 	m.selectWindow(m.find("#one"))
-	check := func(want ...string) {
+	check := func(want ...string) []string {
 		t.Helper()
 		// The sentinel proves there are no additional queued requests.
 		m.command("/whois sentinel")
-		for _, line := range append(want, "WHOIS sentinel") {
-			if got := sent(); got != line {
+		lines := make([]string, len(want)+1)
+		for i, line := range append(want, "WHOIS sentinel") {
+			got := sent()
+			lines[i] = got
+			if before, ok := strings.CutSuffix(line, "*"); ok {
+				if !strings.HasPrefix(got, before) {
+					t.Fatalf("server received %q, want prefix %q", got, before)
+				}
+				continue
+			}
+			if got != line {
 				t.Fatalf("server received %q, want %q", got, line)
 			}
 		}
+		return lines
 	}
 	return m, check
+}
+
+func checkNamesFence(t *testing.T, check func(...string) []string) string {
+	t.Helper()
+	line := check("PING :names-*")[0]
+	token, ok := strings.CutPrefix(line, "PING :")
+	if !ok {
+		t.Fatalf("server received %q, want a names fence PING", line)
+	}
+	return token
 }
 
 // ```gherkin
@@ -120,7 +141,7 @@ func TestNamesChangesDuringFollowUp(t *testing.T) {
 //
 // ```
 func TestNamesExplicitOverlap(t *testing.T) {
-	for _, command := range []string{"/names", "/names #ONE", "/names #one,#two", "/names #one irc.gloom.im", "/names "} {
+	for _, command := range []string{"/names", "/names #ONE", "/names #one irc.gloom.im", "/names "} {
 		for _, explicitFirst := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/explicitFirst=%t", command, explicitFirst), func(t *testing.T) {
 				m, check := namesModel(t)
@@ -131,7 +152,6 @@ func TestNamesExplicitOverlap(t *testing.T) {
 				wire := map[string]string{
 					"/names":                   "NAMES #one",
 					"/names #ONE":              "NAMES #ONE",
-					"/names #one,#two":         "NAMES #one,#two",
 					"/names #one irc.gloom.im": "NAMES #one irc.gloom.im",
 					"/names ":                  "NAMES",
 				}[command]
@@ -211,12 +231,25 @@ func TestNamesTimeout(t *testing.T) {
 				m.Update(tick(deadline.Add(-time.Nanosecond)))
 				check()
 				m.Update(tick(deadline))
-				if !dirty {
+				fence := checkNamesFence(t, check)
+				if dirty {
+					check()
+				}
+				deliver(t, m, ":irc.gloom.im PONG tester :"+fence)
+				if dirty {
+					check("NAMES #one")
+				} else {
 					check()
 					deliver(t, m, ":alice!u@gloom.im MODE #one -v bob")
+					check("NAMES #one")
 				}
-				check("NAMES #one")
+				before := len(w.lines)
 				deliver(t, m, ":irc.gloom.im 353 tester = #one :tester bob")
+				deliver(t, m, ":irc.gloom.im 366 tester #one :End of names")
+				check()
+				if len(w.lines) != before {
+					t.Fatal("automatic reply became visible after the fence")
+				}
 				if len(w.nicks) != 2 || w.nicks["bob"] != "bob" {
 					t.Fatalf("partial nicklist survived timeout: %v", w.nicks)
 				}
@@ -224,12 +257,12 @@ func TestNamesTimeout(t *testing.T) {
 				check()
 				m.Update(tick(deadline.Add(2 * namesTimeout)))
 				check()
-				if w.suppressJoinNames || w.namesReceiving || len(w.namesRequests) != 0 {
+				if w.suppressNames || w.namesReceiving || len(w.namesRequests) != 0 {
 					t.Fatal("timed-out reply state retained")
 				}
 				m.command("/names")
 				check("NAMES #one")
-				before := len(w.lines)
+				before = len(w.lines)
 				deliver(t, m, ":irc.gloom.im 353 tester = #one :tester bob")
 				if len(w.lines) != before+1 {
 					t.Fatal("explicit reply hidden after timeout")
@@ -252,10 +285,13 @@ func TestNamesJoinTimeout(t *testing.T) {
 	deliver(t, m, ":tester!u@gloom.im JOIN #one")
 	deliver(t, m, ":alice!u@gloom.im MODE #one +v bob")
 	check()
-	m.Update(tick(m.now.Add(namesTimeout)))
+	deadline := m.now.Add(namesTimeout)
+	m.Update(tick(deadline))
+	fence := checkNamesFence(t, check)
+	deliver(t, m, ":irc.gloom.im PONG tester :"+fence)
 	check("NAMES #one")
-	m.Update(tick(m.now.Add(namesTimeout)))
-	check()
+	m.Update(tick(deadline.Add(namesTimeout)))
+	checkNamesFence(t, check)
 }
 
 // ```gherkin
@@ -277,6 +313,8 @@ func TestNamesExplicitTimeoutBeforeAutomatic(t *testing.T) {
 	}
 	check("NAMES #one")
 	m.Update(tick(m.now.Add(namesTimeout - time.Second)))
+	fence := checkNamesFence(t, check)
+	deliver(t, m, ":irc.gloom.im PONG tester :"+fence)
 	check()
 	w := m.current()
 	before := len(w.lines)
@@ -286,6 +324,70 @@ func TestNamesExplicitTimeoutBeforeAutomatic(t *testing.T) {
 	if len(w.lines) != before {
 		t.Fatal("automatic reply became visible after explicit timeout")
 	}
+}
+
+// ```gherkin
+// Scenario: A late names reply cannot consume a newer request
+//
+//	Given an automatic names reply is stalled beyond its timeout
+//	When its late end reply arrives before the fence reply
+//	Then the late reply completes the automatic request
+//	And the newer explicit reply remains visible
+//
+// ```
+func TestNamesLateReplyBeforeFencePONG(t *testing.T) {
+	m, check := namesModel(t)
+	w := m.current()
+	deliver(t, m, ":alice!u@gloom.im MODE #one +v bob")
+	check("NAMES #one")
+	deadline := m.now.Add(namesTimeout)
+	m.Update(tick(deadline))
+	fence := checkNamesFence(t, check)
+	m.command("/names")
+	check("NAMES #one")
+	before := len(w.lines)
+	deliver(t, m, ":irc.gloom.im 353 tester = #one :tester @alice")
+	deliver(t, m, ":irc.gloom.im 366 tester #one :End of names")
+	if len(w.lines) != before || len(w.namesRequests) != 1 || w.namesRequests[0].automatic {
+		t.Fatal("late automatic reply consumed or exposed the newer explicit request")
+	}
+	deliver(t, m, ":irc.gloom.im PONG tester :"+fence)
+	check()
+	if len(w.namesRequests) != 1 || w.namesRequests[0].automatic {
+		t.Fatal("fence removed a request sent after it")
+	}
+	before = len(w.lines)
+	deliver(t, m, ":irc.gloom.im 353 tester = #one :tester @alice")
+	deliver(t, m, ":irc.gloom.im 366 tester #one :End of names")
+	check()
+	if len(w.lines) != before+1 {
+		t.Fatal("newer explicit reply was hidden")
+	}
+}
+
+// ```gherkin
+// Scenario: An unanswered fence can be replaced without accepting its late pong
+//
+//	Given a names fence receives no pong
+//	When its timeout passes and a new fence is sent
+//	Then a late pong for the first fence does not clear the second
+//
+// ```
+func TestNamesFenceTimeout(t *testing.T) {
+	m, check := namesModel(t)
+	deliver(t, m, ":alice!u@gloom.im MODE #one +v bob")
+	check("NAMES #one")
+	start := m.now
+	m.Update(tick(start.Add(namesTimeout)))
+	firstFence := checkNamesFence(t, check)
+	m.Update(tick(start.Add(2 * namesTimeout)))
+	secondFence := checkNamesFence(t, check)
+	deliver(t, m, ":irc.gloom.im PONG tester :"+firstFence)
+	check()
+	deliver(t, m, ":irc.gloom.im PONG tester :"+secondFence)
+	check()
+	deliver(t, m, ":alice!u@gloom.im MODE #one -v bob")
+	check("NAMES #one")
 }
 
 // ```gherkin
@@ -323,7 +425,7 @@ func TestNamesDeparture(t *testing.T) {
 			deliver(t, m, ":tester!u@gloom.im JOIN #one")
 			w := m.current()
 			deliver(t, m, ":irc.gloom.im 366 tester #one :End of names")
-			if len(w.namesRequests) != 0 || w.namesDirty || w.namesReceiving || w.suppressJoinNames {
+			if len(w.namesRequests) != 0 || w.namesDirty || w.namesReceiving || w.suppressNames {
 				t.Fatal("old names state survived rejoin")
 			}
 			if action != "disconnect" {
@@ -346,7 +448,7 @@ func TestNamesSendFailure(t *testing.T) {
 	m.client.Close()
 	deliver(t, m, ":alice!u@gloom.im MODE #one +v bob")
 	w := m.current()
-	if len(w.namesRequests) != 0 || w.suppressJoinNames || w.namesDirty {
+	if len(w.namesRequests) != 0 || w.suppressNames || w.namesDirty {
 		t.Fatal("failed send retained an automatic request")
 	}
 	m.command("/names")
@@ -356,16 +458,16 @@ func TestNamesSendFailure(t *testing.T) {
 }
 
 // ```gherkin
-// Scenario: Accept global and multi-channel end-of-names replies
+// Scenario: Accept global end-of-names replies
 //
-//	Given an explicit global or multi-channel names request is pending
+//	Given an explicit global names request is pending
 //	When the server sends one completion for the whole request
 //	Then later automatic refreshes stay silent and finish normally
 //	And no window opens for the aggregate reply target
 //
 // ```
 func TestNamesAggregateCompletion(t *testing.T) {
-	for _, target := range []string{"*", "#ONE,#two"} {
+	for _, target := range []string{"*"} {
 		t.Run(target, func(t *testing.T) {
 			m, check := namesModel(t)
 			beforeWindows := len(m.windows)
@@ -398,9 +500,9 @@ func TestNamesAggregateCompletion(t *testing.T) {
 }
 
 // ```gherkin
-// Scenario: Aggregate completion preserves unrelated requests
+// Scenario: Global completion preserves unrelated requests
 //
-//	Given two global or multi-channel requests and an automatic refresh overlap
+//	Given two global requests and an automatic refresh overlap
 //	And the first explicit reply may already have per-channel completions
 //	When the first aggregate completion arrives
 //	Then the second explicit reply stays visible
@@ -408,7 +510,7 @@ func TestNamesAggregateCompletion(t *testing.T) {
 //
 // ```
 func TestNamesAggregateOverlap(t *testing.T) {
-	for _, target := range []string{"*", "#one,#two"} {
+	for _, target := range []string{"*"} {
 		for _, individualEnds := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/individualEnds=%t", target, individualEnds), func(t *testing.T) {
 				m, check := namesModel(t)
@@ -482,6 +584,8 @@ func TestNamesAggregateCleanup(t *testing.T) {
 				m.disconnect()
 			} else {
 				m.Update(tick(m.now.Add(namesTimeout)))
+				fence := checkNamesFence(t, check)
+				deliver(t, m, ":irc.gloom.im PONG tester :"+fence)
 				check()
 			}
 			if len(m.namesBatches) != 0 {
@@ -493,5 +597,137 @@ func TestNamesAggregateCleanup(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+// ```gherkin
+// Scenario: A late global reply completes the older request
+//
+//	Given a global names reply is delayed beyond its timeout
+//	When a newer global request is pending and the older reply arrives
+//	Then the older reply does not complete the newer request
+//	And the fence pong does not discard the newer request
+//
+// ```
+func TestNamesGlobalBatchLateReplyBeforeFencePONG(t *testing.T) {
+	m, check := namesModel(t)
+	m.selectWindow(m.serverWindow())
+	m.command("/names")
+	check("NAMES")
+	for _, channel := range []string{"#one", "#two"} {
+		deliver(t, m, ":irc.gloom.im 366 tester "+channel+" :End of names")
+	}
+	check()
+	if len(m.namesBatches) != 1 {
+		t.Fatal("individual channel completions removed the global batch")
+	}
+	m.Update(tick(m.now.Add(namesTimeout)))
+	fence := checkNamesFence(t, check)
+	m.command("/names")
+	check("NAMES")
+	deliver(t, m, ":irc.gloom.im 366 tester * :End of names")
+	check()
+	if len(m.namesBatches) != 1 {
+		t.Fatal("late global reply did not complete only the older batch")
+	}
+	deliver(t, m, ":irc.gloom.im PONG tester :"+fence)
+	check()
+	if len(m.namesBatches) != 1 {
+		t.Fatal("fence removed the newer global batch")
+	}
+	for _, channel := range []string{"#one", "#two"} {
+		w := m.windows[m.find(channel)]
+		if len(w.namesRequests) != 1 || w.namesRequests[0].batch == nil {
+			t.Fatalf("%s newer global request was lost", channel)
+		}
+	}
+	deliver(t, m, ":irc.gloom.im 366 tester * :End of names")
+	check()
+	if len(m.namesBatches) != 0 {
+		t.Fatal("newer global batch stayed pending")
+	}
+}
+
+// ```gherkin
+// Scenario: A lag pong does not clear a names fence
+//
+//	Given a lag ping and a names fence are both pending
+//	When the server returns the lag pong
+//	Then the names request remains pending until its matching fence pong
+//
+// ```
+func TestNamesFenceAndLagPONGAreIndependent(t *testing.T) {
+	m, check := namesModel(t)
+	w := m.current()
+	deliver(t, m, ":alice!u@gloom.im MODE #one +v bob")
+	check("NAMES #one")
+	m.registered = true
+	m.Update(tick(m.now.Add(namesTimeout)))
+	lines := check("PING :*", "PING :names-*")
+	lagToken, ok := strings.CutPrefix(lines[0], "PING :")
+	if !ok {
+		t.Fatalf("lag ping %q has no token", lines[0])
+	}
+	fenceToken, ok := strings.CutPrefix(lines[1], "PING :")
+	if !ok {
+		t.Fatalf("names fence %q has no token", lines[1])
+	}
+	deliver(t, m, ":irc.gloom.im PONG tester :"+lagToken)
+	check()
+	if m.ping != "" || m.namesFence == nil || len(w.namesRequests) != 1 {
+		t.Fatal("lag pong cleared the names fence")
+	}
+	deliver(t, m, ":irc.gloom.im PONG tester :"+fenceToken)
+	check()
+	if m.namesFence != nil || len(w.namesRequests) != 0 {
+		t.Fatal("matching fence pong did not clear the names request")
+	}
+}
+
+// ```gherkin
+// Scenario: Split a multi-channel names request into independent requests
+//
+//	Given two joined channels
+//	When the user requests names for both channels
+//	Then the server receives one request per channel
+//	And later automatic and explicit replies on the second channel are matched
+//
+// ```
+func TestNamesMultiChannelSplit(t *testing.T) {
+	m, check := namesModel(t)
+	one, two := m.windows[m.find("#one")], m.windows[m.find("#two")]
+	beforeWindows := len(m.windows)
+	m.command("/names #one,#two")
+	check("NAMES #one", "NAMES #two")
+	for _, channel := range []string{"#one", "#two"} {
+		before := len(m.windows[m.find(channel)].lines)
+		deliver(t, m, ":irc.gloom.im 353 tester = "+channel+" :tester @alice")
+		deliver(t, m, ":irc.gloom.im 366 tester "+channel+" :End of names")
+		if got := len(m.windows[m.find(channel)].lines) - before; got != 1 {
+			t.Fatalf("%s explicit reply added %d lines, want 1", channel, got)
+		}
+	}
+	check()
+	if len(one.namesRequests) != 0 || len(two.namesRequests) != 0 || len(m.namesBatches) != 0 {
+		t.Fatal("multi-channel requests left stale tracking")
+	}
+	deliver(t, m, ":alice!u@gloom.im MODE #two +o carol")
+	check("NAMES #two")
+	before := len(two.lines)
+	deliver(t, m, ":irc.gloom.im 353 tester = #two :tester @carol")
+	deliver(t, m, ":irc.gloom.im 366 tester #two :End of names")
+	check()
+	if len(two.lines) != before {
+		t.Fatal("automatic reply became visible after the multi-channel request")
+	}
+	m.selectWindow(m.find("#two"))
+	m.command("/names")
+	check("NAMES #two")
+	before = len(two.lines)
+	deliver(t, m, ":irc.gloom.im 353 tester = #two :tester @carol")
+	deliver(t, m, ":irc.gloom.im 366 tester #two :End of names")
+	check()
+	if len(two.lines) != before+1 || len(m.windows) != beforeWindows {
+		t.Fatal("later explicit reply was hidden or an aggregate window opened")
 	}
 }

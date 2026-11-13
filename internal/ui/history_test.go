@@ -145,7 +145,7 @@ func TestHistoryMembershipInvalidation(t *testing.T) {
 			w.nicks["alice"] = "@alice"
 			w.nicks["tester"] = "tester"
 			w.rowsVersion++
-			w.suppressJoinNames = true
+			w.suppressNames = true
 			m.View()
 			before := m.chatRows.rows[0]
 			deliver(t, m, event)

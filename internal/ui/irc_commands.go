@@ -23,6 +23,26 @@ func atoms(values []string) bool {
 
 func validChannel(s string) bool { return isChannel(s) && irc.Atom(s) }
 
+func validNamesArgs(args []string) bool {
+	if len(args) == 0 {
+		return true
+	}
+	if len(args) > 2 || len(args) == 2 && !irc.Atom(args[1]) {
+		return false
+	}
+	targets := 0
+	for target := range strings.SplitSeq(args[0], ",") {
+		if target == "" {
+			continue
+		}
+		if !irc.Atom(target) {
+			return false
+		}
+		targets++
+	}
+	return targets > 0
+}
+
 func ircLine(verb string, args ...string) string {
 	if len(args) == 0 {
 		return verb
@@ -106,7 +126,7 @@ func (m *Model) ircCommand(cmd, rest string) bool {
 			m.toggleList()
 			return true
 		}
-		if len(args) > 2 || !atoms(args) {
+		if len(args) > 2 || (cmd == "/names" && !validNamesArgs(args)) || (cmd != "/names" && !atoms(args)) {
 			usage(cmd + " [target] [server or flags]")
 			return true
 		}
@@ -120,9 +140,28 @@ func (m *Model) ircCommand(cmd, rest string) bool {
 			}
 			args = []string{target}
 		}
-		if m.send(ircLine(strings.ToUpper(strings.TrimPrefix(cmd, "/")), args...)) && cmd == "/names" {
-			m.trackExplicitNames(args)
+		if cmd == "/names" {
+			if len(args) == 0 {
+				if m.send("NAMES") {
+					m.trackExplicitNames(nil)
+				}
+				return true
+			}
+			for target := range strings.SplitSeq(args[0], ",") {
+				if target == "" {
+					continue
+				}
+				namesArgs := []string{target}
+				if len(args) > 1 {
+					namesArgs = append(namesArgs, args[1])
+				}
+				if m.send(ircLine("NAMES", namesArgs...)) {
+					m.trackExplicitNames([]string{target})
+				}
+			}
+			return true
 		}
+		m.send(ircLine(strings.ToUpper(strings.TrimPrefix(cmd, "/")), args...))
 	case "/notice":
 		target, text, ok := strings.Cut(rest, " ")
 		text = strings.TrimSpace(text)

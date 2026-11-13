@@ -58,7 +58,11 @@ func (m *Model) receive(e irc.Event) {
 			}
 		}
 	case "PONG":
-		if p.Trailing() == m.ping && m.ping != "" {
+		token := p.Trailing()
+		if m.namesFence != nil && token == m.namesFence.token {
+			m.finishNamesFence()
+		}
+		if token == m.ping && m.ping != "" {
 			m.lag = time.Since(m.pingAt)
 			m.ping = ""
 		}
@@ -129,7 +133,7 @@ func (m *Model) receive(e irc.Event) {
 		if self {
 			w.joined = true
 			w.resetNames()
-			w.trackNames(namesRequest{at: m.now, automatic: true})
+			w.trackNames(m.newNamesRequest(true, nil))
 			m.selectWindow(i)
 		}
 		m.add(i, "", nick+" joined")
@@ -223,7 +227,7 @@ func (m *Model) receive(e irc.Event) {
 			n = irc.Clean(n)
 			w.nicks[irc.Fold(strings.TrimLeft(n, modePrefixes))] = n
 		}
-		if !w.suppressJoinNames {
+		if !w.suppressNames {
 			m.addCode(i, code, "", "Names: "+a[3])
 		}
 	case "366":
