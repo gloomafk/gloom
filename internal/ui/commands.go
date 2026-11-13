@@ -78,7 +78,8 @@ func (m *Model) command(s string) tea.Cmd {
 			return nil
 		}
 		w := m.current()
-		m.rowsVersion++
+		w.rowsVersion++
+		w.firstLine += uint64(len(w.lines))
 		w.lines = nil
 		w.offset = 0
 		w.pending = 0

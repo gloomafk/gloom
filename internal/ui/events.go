@@ -21,8 +21,8 @@ func (m *Model) receive(e irc.Event) {
 	if p == nil {
 		return
 	}
-	// addLine and disconnect invalidate the row cache. Nick changes also add
-	// a line; replies that leave message rows unchanged must not invalidate it.
+	// Membership changes restyle retained rows in the affected windows.
+	// Ordinary arrivals only append rows to that window's history.
 	a := p.Params
 	// A numeric reply starts with the target, our own nick, which is not shown.
 	code := ""
@@ -124,6 +124,7 @@ func (m *Model) receive(e irc.Event) {
 			return
 		}
 		w := m.windows[i]
+		w.rowsVersion++
 		w.nicks[folded] = nick
 		if self {
 			w.joined = true
@@ -156,6 +157,7 @@ func (m *Model) receive(e irc.Event) {
 			return
 		}
 		gone := irc.Fold(who)
+		m.windows[i].rowsVersion++
 		delete(m.windows[i].nicks, gone)
 		if gone == irc.Fold(m.nick) {
 			m.windows[i].joined = false
@@ -171,6 +173,7 @@ func (m *Model) receive(e irc.Event) {
 			if _, ok := w.nicks[folded]; !ok {
 				continue
 			}
+			w.rowsVersion++
 			delete(w.nicks, folded)
 			m.add(i, "", nick+" quit: "+p.Trailing())
 		}
@@ -181,6 +184,7 @@ func (m *Model) receive(e irc.Event) {
 		next := irc.Clean(a[0])
 		for _, w := range m.windows {
 			if old, ok := w.nicks[folded]; ok {
+				w.rowsVersion++
 				delete(w.nicks, folded)
 				prefix, _ := splitPrefix(old)
 				w.nicks[irc.Fold(next)] = prefix + next
@@ -208,6 +212,7 @@ func (m *Model) receive(e irc.Event) {
 			return
 		}
 		w := m.windows[i]
+		w.rowsVersion++
 		if !w.namesReceiving {
 			clear(w.nicks)
 			w.namesReceiving = true
